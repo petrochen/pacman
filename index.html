@@ -547,34 +547,50 @@ function moveGhost(g) {
     return;
   }
 
+  var spd = g.speed;
+  var prevTileC = Math.round(g.x / CELL);
+  var prevTileR = Math.round(g.y / CELL);
+
+  // Move first
+  g.x += g.dir.x * spd;
+  g.y += g.dir.y * spd;
+
+  // Tunnel wrap
+  if (g.x < -CELL) g.x = COLS * CELL;
+  if (g.x > COLS * CELL) g.x = -CELL;
+
   var cr = Math.round(g.y / CELL);
   var cc = Math.round(g.x / CELL);
-  var alignedR = Math.abs(g.y - cr * CELL) < g.speed + 1;
-  var alignedC = Math.abs(g.x - cc * CELL) < g.speed + 1;
 
-  if (alignedR && alignedC) {
+  // Only decide when entering a NEW tile
+  if (cr !== prevTileR || cc !== prevTileC) {
+    // Snap to new tile center
     g.x = cc * CELL;
     g.y = cr * CELL;
 
+    // Choose direction at this intersection
     var dirs = [
       { x: 0, y: -1 }, { x: 0, y: 1 },
       { x: -1, y: 0 }, { x: 1, y: 0 }
     ];
 
-    var target;
     if (g.frightened) {
       var valid = dirs.filter(function(d) {
         if (dirOpposite(d, g.dir)) return false;
         var nr = cr + d.y;
         var nc = cc + d.x;
-        return !isGhostWall(nr, nc < 0 ? COLS-1 : nc >= COLS ? 0 : nc) && maze[nr < 0 ? 0 : nr >= ROWS ? ROWS-1 : nr][nc < 0 ? COLS-1 : nc >= COLS ? 0 : nc] !== 4;
+        if (nc < 0) nc = COLS - 1;
+        if (nc >= COLS) nc = 0;
+        if (isGhostWall(nr, nc)) return false;
+        if (maze[nr] && maze[nr][nc] === 4) return false;
+        return true;
       });
       if (valid.length > 0) {
         g.dir = valid[Math.floor(Math.random() * valid.length)];
       }
     } else {
-      target = getGhostTarget(g);
-      var bestDir = g.dir;
+      var target = getGhostTarget(g);
+      var bestDir = null;
       var bestDist = Infinity;
       for (var i = 0; i < dirs.length; i++) {
         var d = dirs[i];
@@ -584,26 +600,22 @@ function moveGhost(g) {
         if (nc < 0) nc = COLS - 1;
         if (nc >= COLS) nc = 0;
         if (isGhostWall(nr, nc)) continue;
-        if (maze[nr] && maze[nr][nc] === 4 && !g.eaten) continue;
+        if (maze[nr] && maze[nr][nc] === 4) continue;
         var dist2 = (target.r - nr)*(target.r - nr) + (target.c - nc)*(target.c - nc);
         if (dist2 < bestDist) {
           bestDist = dist2;
           bestDir = d;
         }
       }
-      g.dir = bestDir;
+      if (bestDir) {
+        g.dir = bestDir;
+      } else {
+        // Dead end — reverse (shouldn't happen in standard maze)
+        g.dir = { x: -g.dir.x, y: -g.dir.y };
+      }
     }
   }
 
-  var spd = g.speed;
-  var nx = g.x + g.dir.x * spd;
-  var ny = g.y + g.dir.y * spd;
-
-  if (nx < -CELL) nx = COLS * CELL;
-  if (nx > COLS * CELL) nx = -CELL;
-
-  g.x = nx;
-  g.y = ny;
   if (g.dir.x !== 0 || g.dir.y !== 0) {
     g.eyeDir = { x: g.dir.x, y: g.dir.y };
   }
