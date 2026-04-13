@@ -465,11 +465,17 @@ function dirOpposite(a, b) { return a.x === -b.x && a.y === -b.y; }
 function canMove(px, py, dx, dy) {
   var nx = px + dx;
   var ny = py + dy;
-  var tileR = Math.round(ny / CELL);
-  var tileC = Math.round(nx / CELL);
-  if (isWall(tileR, tileC)) return false;
-  if (isWall(Math.floor(ny / CELL), Math.floor(nx / CELL))) return false;
-  if (isWall(Math.ceil(ny / CELL) - 1, Math.ceil(nx / CELL) - 1)) return false;
+  // 1px margin so pacman can squeeze through corridors
+  var m = 1;
+  var r1 = Math.floor((ny + m) / CELL);
+  var r2 = Math.floor((ny + CELL - 1 - m) / CELL);
+  var c1 = Math.floor((nx + m) / CELL);
+  var c2 = Math.floor((nx + CELL - 1 - m) / CELL);
+  for (var r = r1; r <= r2; r++) {
+    for (var c = c1; c <= c2; c++) {
+      if (isWall(r, c)) return false;
+    }
+  }
   return true;
 }
 
