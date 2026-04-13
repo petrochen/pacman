@@ -1439,10 +1439,10 @@ document.getElementById('start-btn').addEventListener('click', function(e) {
 
 // ===================== GAME LOGIC =====================
 function initGame() {
-  initMaze();
   score = 0;
   lives = 3;
   level = 1;
+  initMaze();
   extraLifeAwarded = false; // ARC-1
   frightenDuration = FRIGHTEN_DURATIONS[0]; // ARC-4
   frightenTimer = 0;
