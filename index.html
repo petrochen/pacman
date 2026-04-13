@@ -331,6 +331,8 @@ var frightenTimer = 0, frightenDuration = 8000;
 var readyTimer = 0;
 var eatGhostScore = 200;
 var wonFlashCount = 0; var wonFlashTimer = 0;
+var intermissionTimer = 0;
+var intermissionType = 0;
 var scorePopups = [];
 var lastTime = 0;
 var extraLifeAwarded = false; // ARC-1: extra life at 10,000 points
@@ -997,6 +999,219 @@ function drawGhostEyes(g, cx, cy) {
   ctx.fill();
 }
 
+function drawIntermissionPacman(cx, cy, r, facing, mouthAngle) {
+  // facing: 0=right, 1=left
+  var oa = facing === 0 ? 0 : Math.PI;
+  var mouth = mouthAngle * Math.PI;
+  ctx.fillStyle = '#FFD700';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.arc(cx, cy, r, oa + mouth, oa + Math.PI*2 - mouth);
+  ctx.closePath();
+  ctx.fill();
+  // eye
+  var eyeAngle = oa - Math.PI/3;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.arc(cx + Math.cos(eyeAngle) * r * 0.5, cy + Math.sin(eyeAngle) * r * 0.5, r * 0.15, 0, Math.PI*2);
+  ctx.fill();
+}
+
+function drawIntermissionGhost(cx, cy, r, color, torn, naked) {
+  // torn: 0=full, 1=half, 2=just-body
+  // naked: show blue body instead of ghost shape
+  if (naked) {
+    // Blinky caught — just a small naked blue ellipse
+    ctx.fillStyle = '#0000cc';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 0.8, r * 0.6, 0, 0, Math.PI*2);
+    ctx.fill();
+    // eyes still visible
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(cx - r*0.3, cy - r*0.1, r*0.22, 0, Math.PI*2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx + r*0.3, cy - r*0.1, r*0.22, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#00f';
+    ctx.beginPath();
+    ctx.arc(cx - r*0.15, cy - r*0.1, r*0.12, 0, Math.PI*2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx + r*0.45, cy - r*0.1, r*0.12, 0, Math.PI*2);
+    ctx.fill();
+    return;
+  }
+
+  ctx.fillStyle = color;
+  // Draw ghost body
+  if (torn === 2) {
+    // Just a tattered remnant dragged on the ground — small horizontal strip
+    ctx.fillRect(cx - r, cy - r*0.3, r*2, r*0.6);
+    return;
+  }
+
+  // Full or half ghost
+  var bodyH = torn === 1 ? r * 0.7 : r;
+  ctx.beginPath();
+  ctx.arc(cx, cy - r*0.2, r, Math.PI, 0, false);
+  ctx.lineTo(cx + r, cy + bodyH);
+  if (torn === 0) {
+    // full wavy bottom
+    var waveW = r * 2 / 3;
+    ctx.lineTo(cx + r - waveW*0, cy + bodyH - r*0.25);
+    ctx.lineTo(cx + r - waveW*1, cy + bodyH);
+    ctx.lineTo(cx + r - waveW*2, cy + bodyH - r*0.25);
+    ctx.lineTo(cx - r, cy + bodyH);
+  } else {
+    // torn: jagged bottom edge
+    var tw = r * 2 / 4;
+    ctx.lineTo(cx + r - tw*0, cy + bodyH - r*0.2);
+    ctx.lineTo(cx + r - tw*1, cy + bodyH + r*0.15);
+    ctx.lineTo(cx + r - tw*2, cy + bodyH - r*0.2);
+    ctx.lineTo(cx - r, cy + bodyH);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // Eyes
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(cx - r*0.35, cy - r*0.2, r*0.25, 0, Math.PI*2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx + r*0.35, cy - r*0.2, r*0.25, 0, Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle = '#00f';
+  ctx.beginPath();
+  ctx.arc(cx - r*0.2, cy - r*0.2, r*0.13, 0, Math.PI*2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx + r*0.5, cy - r*0.2, r*0.13, 0, Math.PI*2);
+  ctx.fill();
+}
+
+function drawIntermission() {
+  var t = intermissionTimer;
+  var W = canvas.width;
+  var H = canvas.height;
+  var cy = H / 2;
+  var r = CELL - 2;
+  var pacR = r;
+  var ghostR = r;
+
+  // Black background
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  // Title text
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 10px "Press Start 2P", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  var actLabels = ['', 'ACT I\n"THEY MEET"', 'ACT II\n"THE CHASE"', 'ACT III\n"JUNIOR"'];
+  var lines = actLabels[intermissionType].split('\n');
+  ctx.fillText(lines[0], W/2, H * 0.18);
+  ctx.fillStyle = '#FFF';
+  ctx.font = '8px "Press Start 2P", monospace';
+  ctx.fillText(lines[1], W/2, H * 0.27);
+
+  // Score display (small)
+  drawScore();
+
+  var speed = 1.5;
+  var pacStart = -pacR * 2;
+  var ghostStart = pacStart - CELL * 3;
+  var mouthAnim = Math.abs(Math.sin(t * 0.18)) * 0.25;
+
+  if (intermissionType === 1) {
+    // ACT 1: Pac-Man runs right, Blinky chases. At frame 180 Blinky hits nail.
+    var pacX = pacStart + t * speed;
+    var ghostX = ghostStart + t * speed;
+
+    // After frame 180: ghost stops and turns blue
+    var hitNail = t >= 180;
+    if (hitNail) {
+      ghostX = ghostStart + 180 * speed; // freeze ghost position
+    }
+
+    // Pac-Man (moving right)
+    if (pacX < W + pacR * 2) {
+      drawIntermissionPacman(pacX, cy, pacR, 0, mouthAnim);
+    }
+    // Blinky
+    if (!hitNail) {
+      drawIntermissionGhost(ghostX, cy, ghostR, '#FF0000', 0, false);
+    } else {
+      // hit nail: draw Blinky naked (blue body)
+      var nailX = ghostX + ghostR;
+      // draw a small nail
+      ctx.fillStyle = '#888';
+      ctx.fillRect(nailX - 1, cy - ghostR - 4, 2, 8);
+      ctx.fillRect(nailX - 3, cy - ghostR - 4, 6, 2);
+      // sheet torn off — draw it draped on nail
+      ctx.fillStyle = '#FF0000';
+      ctx.beginPath();
+      ctx.moveTo(nailX, cy - ghostR - 2);
+      ctx.lineTo(nailX + ghostR * 1.5, cy);
+      ctx.lineTo(nailX + ghostR * 1.5, cy + ghostR * 0.5);
+      ctx.lineTo(nailX - ghostR * 0.5, cy + ghostR * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      // naked Blinky
+      drawIntermissionGhost(ghostX, cy, ghostR, '#FF0000', 0, true);
+    }
+
+  } else if (intermissionType === 2) {
+    // ACT 2: Similar chase but Blinky's sheet is torn/half
+    var pacX2 = pacStart + t * speed;
+    var ghostX2 = ghostStart + t * speed;
+
+    if (pacX2 < W + pacR * 2) {
+      drawIntermissionPacman(pacX2, cy, pacR, 0, mouthAnim);
+    }
+    // Blinky with torn sheet (half ghost)
+    drawIntermissionGhost(ghostX2, cy, ghostR, '#FF0000', 1, false);
+    // Draw the trailing torn sheet piece behind
+    if (ghostX2 > 0 && ghostX2 < W) {
+      ctx.fillStyle = '#FF0000';
+      ctx.globalAlpha = 0.6;
+      ctx.fillRect(ghostX2 - ghostR * 2, cy + ghostR * 0.5, ghostR * 2, ghostR * 0.3);
+      ctx.globalAlpha = 1;
+    }
+
+  } else if (intermissionType === 3) {
+    // ACT 3: Blinky drags sheet slowly, tiny baby Pac-Man follows
+    var slowSpeed = 0.8;
+    var ghostX3 = pacStart + t * slowSpeed;
+    var babyX = ghostX3 - CELL * 3;
+
+    // Blinky — just dragging the sheet remnant
+    if (ghostX3 < W + ghostR * 2) {
+      drawIntermissionGhost(ghostX3, cy, ghostR, '#FF0000', 0, true);
+      // dragging sheet on ground
+      ctx.fillStyle = '#FF0000';
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.moveTo(ghostX3 - ghostR, cy + ghostR * 0.4);
+      ctx.lineTo(ghostX3 - ghostR * 4, cy + ghostR * 0.6);
+      ctx.lineTo(ghostX3 - ghostR * 4, cy + ghostR * 0.9);
+      ctx.lineTo(ghostX3 - ghostR, cy + ghostR * 0.7);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // Baby Pac-Man (tiny, 1/2 size)
+    var babyR = pacR * 0.55;
+    var babyMouth = Math.abs(Math.sin(t * 0.2)) * 0.25;
+    if (babyX > -babyR * 2 && babyX < W + babyR * 2) {
+      drawIntermissionPacman(babyX, cy + ghostR * 0.3, babyR, 0, babyMouth);
+    }
+  }
+}
+
 function drawLives() {
   livesCtx.clearRect(0, 0, livesCanvas.width, livesCanvas.height);
   for (var i = 0; i < lives - 1; i++) {
@@ -1395,6 +1610,20 @@ function update(dt) {
       wonFlashCount++;
     }
     if (wonFlashCount >= 8) { // 4 complete cycles (white→blue = 2 per cycle × 4)
+      if (level === 3 || level === 6 || level === 10) { // levels are already incremented
+        gameState = 'intermission';
+        intermissionTimer = 0;
+        intermissionType = level === 3 ? 1 : level === 6 ? 2 : 3;
+      } else {
+        try { initLevel(); } catch(err) { gameState = 'start'; gameStarted = false; }
+      }
+    }
+    return;
+  }
+
+  if (gameState === 'intermission') {
+    intermissionTimer++;
+    if (intermissionTimer >= 360) { // 6 seconds at 60fps
       try { initLevel(); } catch(err) { gameState = 'start'; gameStarted = false; }
     }
     return;
@@ -1490,6 +1719,11 @@ function render() {
     drawPacman();
     drawLives();
     drawScore();
+    return;
+  }
+
+  if (gameState === 'intermission') {
+    drawIntermission();
     return;
   }
 
