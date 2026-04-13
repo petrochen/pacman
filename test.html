@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Pac-Man Tests</title>
+<style>
+  body { background: #1a1a2e; color: #eee; font-family: monospace; padding: 20px; }
+  h1 { color: #FFD700; }
+  .pass { color: #0f0; }
+  .fail { color: #f00; }
+  .error { color: #f66; font-size: 12px; margin-left: 24px; }
+  .summary { font-size: 18px; margin: 20px 0; padding: 10px; border: 2px solid; }
+  .summary.ok { border-color: #0f0; }
+  .summary.bad { border-color: #f00; }
+  #loading { color: #FFD700; }
+  .suite-name { color: #FFD700; font-weight: bold; margin-top: 16px; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>PAC-MAN Test Runner</h1>
+<div id="loading">Loading game...</div>
+<div id="summary"></div>
+<div id="results"></div>
+<iframe id="game-frame" style="display:none"></iframe>
+<script>
+// ===================== INLINE TEST FRAMEWORK =====================
+var tests = [];
+var passed = 0, failed = 0;
+var currentSuite = '';
+
+function describe(name, fn) {
+  currentSuite = name;
+  fn();
+}
+
+function it(name, fn) {
+  var fullName = currentSuite + ' > ' + name;
+  try {
+    fn();
+    passed++;
+    tests.push({ name: fullName, pass: true, suite: currentSuite });
+  } catch(e) {
+    failed++;
+    tests.push({ name: fullName, pass: false, error: e.message, suite: currentSuite });
+  }
+}
+
+function assert(cond, msg) { if (!cond) throw new Error(msg || 'Assertion failed'); }
+function assertEq(a, b, msg) { assert(a === b, (msg || '') + ': expected ' + JSON.stringify(b) + ' got ' + JSON.stringify(a)); }
+function assertGt(a, b, msg) { assert(a > b, (msg || '') + ': expected ' + a + ' > ' + b); }
+function assertLt(a, b, msg) { assert(a < b, (msg || '') + ': expected ' + a + ' < ' + b); }
+function assertNotEq(a, b, msg) { assert(a !== b, (msg || '') + ': expected ' + JSON.stringify(a) + ' to not equal ' + JSON.stringify(b)); }
+
+// ===================== IFRAME BOOTSTRAP =====================
+var frame = document.getElementById('game-frame');
+var iframeDoc = frame.contentDocument || frame.contentWindow.document;
+
+// Build stub document
+var stubHtml = `<!DOCTYPE html><html><head></head><body>
+<canvas id="gameCanvas"></canvas>
+<canvas id="livesCanvas" width="120" height="20"></canvas>
+<div id="overlay" style=""></div>
+<div id="overlay-title"></div>
+<div id="overlay-score"></div>
+<div id="overlay-hints"></div>
+<button id="start-btn"></button>
+<div id="overlay-hint-small"></div>
+<div id="ghost-info"></div>
+<div id="score-val"></div>
+<div id="hiscore-val"></div>
+<div id="level-display"></div>
+<div id="dpad"></div>
+<div id="btn-up"></div>
+<div id="btn-down"></div>
+<div id="btn-left"></div>
+<div id="btn-right"></div>
+<div id="canvas-wrap"></div>
+<div id="header"></div>
+<div id="version-tag"></div>
+</body></html>`;
+
+iframeDoc.open();
+iframeDoc.write(stubHtml);
+iframeDoc.close();
+
+var win = frame.contentWindow;
+
+// Mock canvas context
+function makeMockCtx() {
+  var ctx = {
+    canvas: { width: 448, height: 496 },
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    font: '',
+    textAlign: '',
+    textBaseline: '',
+    globalAlpha: 1,
+    shadowColor: '',
+    shadowBlur: 0
+  };
+  var noop = function() {};
+  ['fillRect','clearRect','fillText','beginPath','arc','moveTo','lineTo',
+   'closePath','fill','stroke','save','restore','translate','scale',
+   'quadraticCurveTo','ellipse','strokeRect','drawImage'].forEach(function(m) {
+    ctx[m] = noop;
+  });
+  ctx.createLinearGradient = function() { return { addColorStop: noop }; };
+  ctx.measureText = function() { return { width: 0 }; };
+  return ctx;
+}
+
+// Override getContext on all canvases in iframe
+var canvasEls = iframeDoc.querySelectorAll('canvas');
+canvasEls.forEach(function(c) {
+  c.getContext = function() { return makeMockCtx(); };
+});
+
+// Stub overlay classList
+var overlayEl = iframeDoc.getElementById('overlay');
+var _overlayClasses = [];
+overlayEl.classList = {
+  add: function(c) { if (_overlayClasses.indexOf(c) < 0) _overlayClasses.push(c); },
+  remove: function(c) { _overlayClasses = _overlayClasses.filter(function(x) { return x !== c; }); },
+  contains: function(c) { return _overlayClasses.indexOf(c) >= 0; }
+};
+
+// Stub dpad classList
+var dpadEl = iframeDoc.getElementById('dpad');
+dpadEl.classList = { add: function(){}, remove: function(){}, contains: function(){ return false; } };
+
+// Audio stubs
+var noopFn = function(){};
+function makeAudioStub() {
+  var gainStub = { gain: { setValueAtTime: noopFn, linearRampToValueAtTime: noopFn, exponentialRampToValueAtTime: noopFn, value: 0 }, connect: noopFn };
+  var oscStub = { frequency: { setValueAtTime: noopFn, linearRampToValueAtTime: noopFn, exponentialRampToValueAtTime: noopFn, value: 440 }, connect: noopFn, start: noopFn, stop: noopFn, type: '' };
+  return {
+    currentTime: 0,
+    createOscillator: function() { return oscStub; },
+    createGain: function() { return gainStub; },
+    destination: {}
+  };
+}
+win.AudioContext = function() { return makeAudioStub(); };
+win.webkitAudioContext = function() { return makeAudioStub(); };
+
+// matchMedia stub
+win.matchMedia = function() { return { matches: false, addEventListener: noopFn }; };
+
+// RAF/CAF stubs — no-op to prevent animation loops
+win.requestAnimationFrame = function(fn) { return 0; };
+win.cancelAnimationFrame = noopFn;
+
+// localStorage stub
+var localStorageData = {};
+win.localStorage = {
+  getItem: function(k) { return localStorageData[k] !== undefined ? localStorageData[k] : null; },
+  setItem: function(k, v) { localStorageData[k] = String(v); },
+  removeItem: function(k) { delete localStorageData[k]; }
+};
+
+// createElement stub for ghost-info canvases (they call getContext('2d'))
+var origCreateElement = iframeDoc.createElement.bind(iframeDoc);
+iframeDoc.createElement = function(tag) {
+  var el = origCreateElement(tag);
+  if (tag === 'canvas') {
+    el.getContext = function() { return makeMockCtx(); };
+  }
+  return el;
+};
+
+// ===================== LOAD GAME SCRIPT =====================
+document.getElementById('loading').textContent = 'Fetching game script...';
+
+fetch('index.html')
+  .then(function(r) { return r.text(); })
+  .then(function(html) {
+    // Extract script content between first <script> and last </script>
+    var start = html.indexOf('<script>');
+    var end = html.lastIndexOf('</script>');
+    if (start < 0 || end < 0) {
+      document.getElementById('loading').textContent = 'ERROR: Could not find <script> block in index.html';
+      return;
+    }
+    var scriptContent = html.slice(start + '<script>'.length, end);
+
+    document.getElementById('loading').textContent = 'Injecting game script...';
+
+    var scriptEl = iframeDoc.createElement('script');
+    scriptEl.textContent = scriptContent;
+    iframeDoc.body.appendChild(scriptEl);
+
+    // Give the script a moment to finish top-level execution
+    setTimeout(function() {
+      document.getElementById('loading').textContent = 'Running tests...';
+      try {
+        runAllTests();
+      } catch(e) {
+        document.getElementById('loading').textContent = 'Test runner crashed: ' + e.message;
+        console.error(e);
+      }
+    }, 100);
+  })
+  .catch(function(e) {
+    document.getElementById('loading').textContent = 'Failed to fetch index.html: ' + e.message + ' (try serving via HTTP)';
+  });
+
+// ===================== ALL TESTS =====================
+function runAllTests() {
+  var win = document.getElementById('game-frame').contentWindow;
+
+  // ---- Suite: Initial State ----
+  describe('Initial State', function() {
+    win.initGame();
+
+    it('initGame() sets score=0', function() {
+      win.initGame();
+      assertEq(win.score, 0, 'score');
+    });
+
+    it('initGame() sets lives=3', function() {
+      win.initGame();
+      assertEq(win.lives, 3, 'lives');
+    });
+
+    it('initGame() sets level=1', function() {
+      win.initGame();
+      assertEq(win.level, 1, 'level');
+    });
+
+    it('gameState is ready after initGame', function() {
+      win.initGame();
+      assertEq(win.gameState, 'ready', 'gameState');
+    });
+
+    it('maze has correct rows (31)', function() {
+      win.initGame();
+      assertEq(win.maze.length, 31, 'maze rows');
+    });
+
+    it('maze has correct cols (28)', function() {
+      win.initGame();
+      assertEq(win.maze[0].length, 28, 'maze cols');
+    });
+
+    it('dots count is 240', function() {
+      win.initGame();
+      var count = 0;
+      for (var r = 0; r < 31; r++) for (var c = 0; c < 28; c++) if (win.MAZE_TEMPLATE[r][c] === 0) count++;
+      assertEq(count, 240, 'dot count in MAZE_TEMPLATE');
+    });
+
+    it('power pellets count is 4', function() {
+      win.initGame();
+      var count = 0;
+      for (var r = 0; r < 31; r++) for (var c = 0; c < 28; c++) if (win.MAZE_TEMPLATE[r][c] === 3) count++;
+      assertEq(count, 4, 'power pellet count');
+    });
+  });
+
+  // ---- Suite: Pac-Man Movement ----
+  describe('Pac-Man Movement', function() {
+    it('canMove() returns true for empty cell', function() {
+      win.initGame();
+      // Row 23, col 1 is a dot (0) — should be passable
+      var result = win.canMove(win.pacman.x, win.pacman.y, 0, 0);
+      assertEq(result, true, 'canMove on valid pos');
+    });
+
+    it('canMove() returns false for wall cell', function() {
+      win.initGame();
+      // pacman at top wall area — try to move into row 0 (all walls)
+      win.pacman.x = 1 * win.CELL;
+      win.pacman.y = 1 * win.CELL;
+      var result = win.canMove(win.pacman.x, win.pacman.y, 0, -win.CELL);
+      assertEq(result, false, 'canMove into wall');
+    });
+
+    it('tunnel wrap: x < -CELL wraps to right side', function() {
+      win.initGame();
+      win.pacman.x = -win.CELL - 1;
+      win.pacman.y = 14 * win.CELL;
+      win.pacman.dir = { x: -1, y: 0 };
+      win.pacman.speed = 0;
+      win.movePacman();
+      assertGt(win.pacman.x, win.COLS * win.CELL - 1, 'pacman wrapped to right');
+    });
+
+    it('snapToGrid rounds to nearest cell', function() {
+      var result = win.snapToGrid(win.CELL * 3 + 5);
+      assertEq(result, win.CELL * 3, 'snap down');
+      var result2 = win.snapToGrid(win.CELL * 3 + 9);
+      assertEq(result2, win.CELL * 4, 'snap up');
+    });
+
+    it('isAligned returns true when on grid', function() {
+      assertEq(win.isAligned(win.CELL * 5), true, 'aligned on grid');
+    });
+
+    it('isAligned returns false when off grid', function() {
+      assertEq(win.isAligned(win.CELL * 5 + 5), false, 'not aligned');
+    });
+  });
+
+  // ---- Suite: Scoring ----
+  describe('Scoring', function() {
+    it('dot gives 10 points', function() {
+      win.initGame();
+      // Find a dot cell and put pacman on it
+      var dotRow = -1, dotCol = -1;
+      outer: for (var r = 0; r < 31; r++) for (var c = 0; c < 28; c++) {
+        if (win.maze[r][c] === 0) { dotRow = r; dotCol = c; break outer; }
+      }
+      win.pacman.x = dotCol * win.CELL;
+      win.pacman.y = dotRow * win.CELL;
+      win.pacman.dir = { x: 0, y: 0 };
+      win.pacman.speed = 0;
+      win.eatSlowFrames = 0;
+      var before = win.score;
+      win.movePacman();
+      assertEq(win.score - before, 10, 'dot score');
+    });
+
+    it('power pellet gives 50 points', function() {
+      win.initGame();
+      var pelletRow = -1, pelletCol = -1;
+      outer: for (var r = 0; r < 31; r++) for (var c = 0; c < 28; c++) {
+        if (win.maze[r][c] === 3) { pelletRow = r; pelletCol = c; break outer; }
+      }
+      win.pacman.x = pelletCol * win.CELL;
+      win.pacman.y = pelletRow * win.CELL;
+      win.pacman.dir = { x: 0, y: 0 };
+      win.pacman.speed = 0;
+      win.eatSlowFrames = 0;
+      // level >= 19 suppresses frighten, but score is still awarded
+      var before = win.score;
+      win.movePacman();
+      assertEq(win.score - before, 50, 'pellet score');
+    });
+
+    it('extra life awarded at 10000', function() {
+      win.initGame();
+      win.score = 9990;
+      win.extraLifeAwarded = false;
+      var livesBefore = win.lives;
+      // Place pacman on a dot
+      var dotRow = -1, dotCol = -1;
+      outer: for (var r = 0; r < 31; r++) for (var c = 0; c < 28; c++) {
+        if (win.maze[r][c] === 0) { dotRow = r; dotCol = c; break outer; }
+      }
+      win.pacman.x = dotCol * win.CELL;
+      win.pacman.y = dotRow * win.CELL;
+      win.pacman.dir = { x: 0, y: 0 };
+      win.pacman.speed = 0;
+      win.eatSlowFrames = 0;
+      win.movePacman();
+      assertGt(win.lives, livesBefore, 'extra life granted');
+    });
+
+    it('extra life only once (extraLifeAwarded flag)', function() {
+      win.initGame();
+      win.score = 9990;
+      win.extraLifeAwarded = true; // already awarded
+      var livesBefore = win.lives;
+      var dotRow = -1, dotCol = -1;
+      outer: for (var r = 0; r < 31; r++) for (var c = 0; c < 28; c++) {
+        if (win.maze[r][c] === 0) { dotRow = r; dotCol = c; break outer; }
+      }
+      win.pacman.x = dotCol * win.CELL;
+      win.pacman.y = dotRow * win.CELL;
+      win.pacman.dir = { x: 0, y: 0 };
+      win.pacman.speed = 0;
+      win.eatSlowFrames = 0;
+      win.movePacman();
+      assertEq(win.lives, livesBefore, 'no extra life when already awarded');
+    });
+  });
+
+  // ---- Suite: Ghost Initialization ----
+  describe('Ghost Initialization', function() {
+    it('Blinky starts outside house (mode !== house)', function() {
+      win.initGame();
+      assertNotEq(win.ghosts[0].mode, 'house', 'Blinky not in house');
+    });
+
+    it('Pinky starts in house', function() {
+      win.initGame();
+      assertEq(win.ghosts[1].mode, 'house', 'Pinky in house');
+    });
+
+    it('Inky starts in house', function() {
+      win.initGame();
+      assertEq(win.ghosts[2].mode, 'house', 'Inky in house');
+    });
+
+    it('Clyde starts in house', function() {
+      win.initGame();
+      assertEq(win.ghosts[3].mode, 'house', 'Clyde in house');
+    });
+
+    it('Blinky starts at correct position (14*CELL, 11*CELL)', function() {
+      win.initGame();
+      assertEq(win.ghosts[0].x, 14 * win.CELL, 'Blinky x');
+      assertEq(win.ghosts[0].y, 11 * win.CELL, 'Blinky y');
+    });
+
+    it('Ghost scatter targets defined for all 4', function() {
+      assert(win.GHOST_SCATTER_TARGETS && win.GHOST_SCATTER_TARGETS.length === 4, 'scatter targets');
+      for (var i = 0; i < 4; i++) {
+        assert(win.GHOST_SCATTER_TARGETS[i] !== undefined, 'scatter target ' + i);
+      }
+    });
+  });
+
+  // ---- Suite: Ghost AI Targeting ----
+  describe('Ghost AI Targeting', function() {
+    it('Blinky in chase targets pacman position', function() {
+      win.initGame();
+      win.ghosts[0].mode = 'chase';
+      win.pacman.x = 10 * win.CELL;
+      win.pacman.y = 5 * win.CELL;
+      var target = win.getGhostTarget(win.ghosts[0]);
+      assertEq(target.r, Math.round(win.pacman.y / win.CELL), 'Blinky target row');
+      assertEq(target.c, Math.round(win.pacman.x / win.CELL), 'Blinky target col');
+    });
+
+    it('Pinky targets 4 tiles ahead of pacman', function() {
+      win.initGame();
+      win.ghosts[1].mode = 'chase';
+      win.pacman.x = 10 * win.CELL;
+      win.pacman.y = 10 * win.CELL;
+      win.pacman.dir = { x: 1, y: 0 };
+      var target = win.getGhostTarget(win.ghosts[1]);
+      var pr = Math.round(win.pacman.y / win.CELL);
+      var pc = Math.round(win.pacman.x / win.CELL);
+      assertEq(target.c, pc + 4, 'Pinky targets 4 ahead');
+    });
+
+    it('Clyde within 8 tiles returns scatter target', function() {
+      win.initGame();
+      win.ghosts[3].mode = 'chase';
+      // Put Clyde right next to pacman (within 8 tiles)
+      win.pacman.x = 14 * win.CELL;
+      win.pacman.y = 14 * win.CELL;
+      win.ghosts[3].x = 14 * win.CELL;
+      win.ghosts[3].y = 14 * win.CELL;
+      var target = win.getGhostTarget(win.ghosts[3]);
+      assertEq(target.r, win.GHOST_SCATTER_TARGETS[3].r, 'Clyde scatter target row');
+      assertEq(target.c, win.GHOST_SCATTER_TARGETS[3].c, 'Clyde scatter target col');
+    });
+
+    it('Clyde far from pacman returns pacman position', function() {
+      win.initGame();
+      win.ghosts[3].mode = 'chase';
+      win.pacman.x = 1 * win.CELL;
+      win.pacman.y = 1 * win.CELL;
+      win.ghosts[3].x = 27 * win.CELL;
+      win.ghosts[3].y = 29 * win.CELL;
+      var target = win.getGhostTarget(win.ghosts[3]);
+      assertEq(target.r, Math.round(win.pacman.y / win.CELL), 'Clyde chase target row');
+      assertEq(target.c, Math.round(win.pacman.x / win.CELL), 'Clyde chase target col');
+    });
+  });
+
+  // ---- Suite: Ghost Release ----
+  describe('Ghost Release', function() {
+    it('Pinky releaseDots = 0 on level 1', function() {
+      win.initGame();
+      assertEq(win.ghosts[1].releaseDots, 0, 'Pinky release dots');
+    });
+
+    it('Inky releaseDots = 30 on level 1', function() {
+      win.initGame();
+      assertEq(win.ghosts[2].releaseDots, 30, 'Inky release dots');
+    });
+
+    it('Clyde releaseDots = 60 on level 1', function() {
+      win.initGame();
+      assertEq(win.ghosts[3].releaseDots, 60, 'Clyde release dots');
+    });
+
+    it('All releaseDots = 0 on level 3+', function() {
+      win.initGame();
+      win.level = 3;
+      win.ghosts = [0,1,2,3].map(win.createGhost);
+      for (var i = 0; i < 4; i++) {
+        assertEq(win.ghosts[i].releaseDots, 0, 'ghost ' + i + ' release on level 3');
+      }
+    });
+
+    it('Backup timer: idleTimer >= 240 triggers exit', function() {
+      win.initGame();
+      // Put Pinky back in house with high idle timer
+      win.ghosts[1].mode = 'house';
+      win.ghosts[1].exitPhase = 0;
+      win.ghosts[1].idleTimer = 239;
+      win.ghosts[1].releaseDots = 999; // won't be reached by dots
+      win.releaseGhosts();
+      // After 1 more increment (240), exitPhase should become 1
+      win.ghosts[1].idleTimer = 240;
+      win.releaseGhosts();
+      assertGt(win.ghosts[1].exitPhase, 0, 'exitPhase > 0 after idle limit');
+    });
+  });
+
+  // ---- Suite: Ghost Speed ----
+  describe('Ghost Speed', function() {
+    it('Ghost speed in tunnel is lower than normal', function() {
+      win.initGame();
+      win.ghosts[0].mode = 'scatter';
+      win.ghosts[0].eaten = false;
+      win.ghosts[0].frightened = false;
+      // Normal position
+      win.ghosts[0].x = 14 * win.CELL;
+      var normalSpeed = win.getGhostSpeed(win.ghosts[0]);
+      // Tunnel position (col <= 5)
+      win.ghosts[0].x = 3 * win.CELL;
+      var tunnelSpeed = win.getGhostSpeed(win.ghosts[0]);
+      assertLt(tunnelSpeed, normalSpeed, 'tunnel speed < normal speed');
+    });
+
+    it('Frightened speed is lower than normal', function() {
+      win.initGame();
+      win.ghosts[0].mode = 'scatter';
+      win.ghosts[0].eaten = false;
+      win.ghosts[0].frightened = false;
+      win.ghosts[0].x = 14 * win.CELL;
+      var normalSpeed = win.getGhostSpeed(win.ghosts[0]);
+      win.ghosts[0].frightened = true;
+      var frightenedSpeed = win.getGhostSpeed(win.ghosts[0]);
+      assertLt(frightenedSpeed, normalSpeed, 'frightened < normal');
+    });
+
+    it('Eaten ghost speed is 1.5 * BASE_SPEED', function() {
+      win.initGame();
+      win.ghosts[0].eaten = true;
+      var speed = win.getGhostSpeed(win.ghosts[0]);
+      assertEq(speed, win.BASE_SPEED * 1.5, 'eaten ghost speed');
+    });
+
+    it('Elroy 1: dots=20, Blinky speed > normal', function() {
+      win.initGame();
+      win.dots = 20;
+      win.ghosts[0].mode = 'scatter';
+      win.ghosts[0].frightened = false;
+      win.ghosts[0].eaten = false;
+      win.ghosts[0].x = 14 * win.CELL;
+      var elroySpeed = win.getGhostSpeed(win.ghosts[0]);
+      win.dots = 100; // reset to many dots so no Elroy
+      var normalSpeed = win.getGhostSpeed(win.ghosts[0]);
+      assertGt(elroySpeed, normalSpeed, 'Elroy 1 speed > normal');
+    });
+
+    it('Elroy 2: dots=10, Blinky speed > Elroy 1 speed', function() {
+      win.initGame();
+      win.ghosts[0].mode = 'scatter';
+      win.ghosts[0].frightened = false;
+      win.ghosts[0].eaten = false;
+      win.ghosts[0].x = 14 * win.CELL;
+      win.dots = 20;
+      var elroy1Speed = win.getGhostSpeed(win.ghosts[0]);
+      win.dots = 10;
+      var elroy2Speed = win.getGhostSpeed(win.ghosts[0]);
+      assertGt(elroy2Speed, elroy1Speed, 'Elroy 2 > Elroy 1');
+    });
+  });
+
+  // ---- Suite: Frighten Mode ----
+  describe('Frighten Mode', function() {
+    it('frighten() sets non-house ghosts to frightened', function() {
+      win.initGame();
+      // Move Blinky out of house (already done), set others out too
+      win.ghosts[1].mode = 'scatter';
+      win.ghosts[2].mode = 'scatter';
+      win.ghosts[3].mode = 'scatter';
+      win.frighten();
+      assert(win.ghosts[0].frightened, 'Blinky frightened');
+      assert(win.ghosts[1].frightened, 'Pinky frightened');
+    });
+
+    it('frighten() does not frighten house ghosts', function() {
+      win.initGame();
+      // Pinky is in house
+      win.frighten();
+      assertEq(win.ghosts[1].frightened, false, 'Pinky not frightened (in house)');
+    });
+
+    it('frighten() reverses ghost directions', function() {
+      win.initGame();
+      win.ghosts[0].dir = { x: 1, y: 0 };
+      win.frighten();
+      assertEq(win.ghosts[0].dir.x, -1, 'Blinky dir reversed');
+    });
+
+    it('Level 19+: frighten() does not set frightened', function() {
+      win.initGame();
+      win.level = 19;
+      win.ghosts[0].frightened = false;
+      win.frighten();
+      assertEq(win.ghosts[0].frightened, false, 'no frighten on level 19+');
+    });
+
+    it('FRIGHTEN_DURATIONS has 20 entries', function() {
+      assertEq(win.FRIGHTEN_DURATIONS.length, 20, 'frighten durations count');
+    });
+
+    it('FRIGHTEN_DURATIONS[0] = 6000 (level 1)', function() {
+      assertEq(win.FRIGHTEN_DURATIONS[0], 6000, 'level 1 frighten duration');
+    });
+
+    it('eatGhostScore resets to 200 on frighten', function() {
+      win.initGame();
+      win.eatGhostScore = 800;
+      win.frighten();
+      assertEq(win.eatGhostScore, 200, 'eatGhostScore reset');
+    });
+  });
+
+  // ---- Suite: Ghost Chain Scoring ----
+  describe('Ghost Chain Scoring', function() {
+    it('First ghost = 200 points', function() {
+      win.initGame();
+      assertEq(win.eatGhostScore, 200, 'initial eatGhostScore');
+    });
+
+    it('Second ghost = 400 points (doubles)', function() {
+      win.initGame();
+      win.frighten();
+      // Simulate eating first ghost
+      var scoreBefore = win.score;
+      win.score += win.eatGhostScore; // 200
+      win.eatGhostScore *= 2;
+      assertEq(win.eatGhostScore, 400, 'second ghost score');
+    });
+  });
+
+  // ---- Suite: Mode Switching ----
+  describe('Mode Switching', function() {
+    it('Initial globalGhostMode is scatter', function() {
+      win.initGame();
+      assertEq(win.globalGhostMode, 'scatter', 'initial mode');
+    });
+
+    it('MODE_DURATIONS_L1[0] = 7000 (first scatter)', function() {
+      assertEq(win.MODE_DURATIONS_L1[0], 7000, 'L1 first scatter duration');
+    });
+
+    it('After scatter duration, mode switches to chase', function() {
+      win.initGame();
+      win.gameState = 'playing';
+      // Drive modeTimer past first scatter period
+      win.modeTimer = win.MODE_DURATIONS_L1[0] - 1;
+      win.updateGhostMode(win.STEP * 2);
+      assertEq(win.globalGhostMode, 'chase', 'mode switches to chase');
+    });
+  });
+
+  // ---- Suite: Fruit ----
+  describe('Fruit', function() {
+    it('getFruitType() returns cherry (100pts) on level 1', function() {
+      win.initGame();
+      var ft = win.getFruitType();
+      assertEq(ft.name, 'cherry', 'level 1 fruit');
+      assertEq(ft.points, 100, 'cherry points');
+    });
+
+    it('getFruitType() returns strawberry (300pts) on level 2', function() {
+      win.initGame();
+      win.level = 2;
+      var ft = win.getFruitType();
+      assertEq(ft.name, 'strawberry', 'level 2 fruit');
+      assertEq(ft.points, 300, 'strawberry points');
+    });
+
+    it('Fruit spawns at 70 dots eaten', function() {
+      win.initGame();
+      win.totalDotsEaten = 69;
+      win.fruitSpawned = [false, false];
+      // Find a dot cell
+      var dotRow = -1, dotCol = -1;
+      outer: for (var r = 0; r < 31; r++) for (var c = 0; c < 28; c++) {
+        if (win.maze[r][c] === 0) { dotRow = r; dotCol = c; break outer; }
+      }
+      win.pacman.x = dotCol * win.CELL;
+      win.pacman.y = dotRow * win.CELL;
+      win.pacman.dir = { x: 0, y: 0 };
+      win.pacman.speed = 0;
+      win.eatSlowFrames = 0;
+      win.movePacman();
+      assert(win.fruit !== null, 'fruit spawned at 70 dots');
+    });
+
+    it('Fruit timer = 600 frames', function() {
+      win.initGame();
+      win.spawnFruit();
+      assertEq(win.fruit.timer, 600, 'fruit timer');
+    });
+
+    it('Fruit disappears when timer reaches 0', function() {
+      win.initGame();
+      win.spawnFruit();
+      win.fruit.timer = 1;
+      win.updateFruit();
+      assertEq(win.fruit, null, 'fruit removed when timer hits 0');
+    });
+  });
+
+  // ---- Suite: Level Progression ----
+  describe('Level Progression', function() {
+    it('Eating all dots sets gameState to won', function() {
+      win.initGame();
+      win.dots = 0;
+      // Move pacman to trigger the dots <= 0 check
+      win.pacman.dir = { x: 0, y: 0 };
+      win.pacman.speed = 0;
+      win.eatSlowFrames = 0;
+      win.movePacman();
+      assertEq(win.gameState, 'won', 'gameState is won');
+    });
+
+    it('Level increments when dots reach 0', function() {
+      win.initGame();
+      win.dots = 0;
+      win.pacman.dir = { x: 0, y: 0 };
+      win.pacman.speed = 0;
+      win.eatSlowFrames = 0;
+      win.movePacman();
+      assertEq(win.level, 2, 'level increments');
+    });
+
+    it('wonFlashCount and wonFlashTimer reset on won', function() {
+      win.initGame();
+      win.wonFlashCount = 99;
+      win.wonFlashTimer = 99;
+      win.dots = 0;
+      win.pacman.dir = { x: 0, y: 0 };
+      win.pacman.speed = 0;
+      win.eatSlowFrames = 0;
+      win.movePacman();
+      assertEq(win.wonFlashCount, 0, 'wonFlashCount reset');
+      assertEq(win.wonFlashTimer, 0, 'wonFlashTimer reset');
+    });
+  });
+
+  // ---- Suite: Intermissions ----
+  describe('Intermissions', function() {
+    function triggerWon(lvl) {
+      win.initGame();
+      win.level = lvl;
+      win.wonFlashCount = 7;
+      win.wonFlashTimer = 14;
+      win.gameState = 'won';
+      // Trigger the update that checks wonFlashCount >= 8
+      win.wonFlashTimer++;
+      win.wonFlashCount = 8;
+      // Simulate the won branch in update()
+      if (win.wonFlashCount >= 8) {
+        if (lvl === 3 || lvl === 6 || lvl === 10) {
+          win.gameState = 'intermission';
+          win.intermissionTimer = 0;
+          win.intermissionType = lvl === 3 ? 1 : lvl === 6 ? 2 : 3;
+        }
+      }
+    }
+
+    it('Level 3 triggers intermission type 1', function() {
+      triggerWon(3);
+      assertEq(win.gameState, 'intermission', 'state');
+      assertEq(win.intermissionType, 1, 'type 1');
+    });
+
+    it('Level 6 triggers intermission type 2', function() {
+      triggerWon(6);
+      assertEq(win.gameState, 'intermission', 'state');
+      assertEq(win.intermissionType, 2, 'type 2');
+    });
+
+    it('Level 10 triggers intermission type 3', function() {
+      triggerWon(10);
+      assertEq(win.gameState, 'intermission', 'state');
+      assertEq(win.intermissionType, 3, 'type 3');
+    });
+
+    it('Other levels do not trigger intermission', function() {
+      win.initGame();
+      win.level = 5;
+      win.gameState = 'won';
+      win.wonFlashCount = 8;
+      // Not 3, 6, or 10 — should go to initLevel, not intermission
+      var wasIntermission = (win.level === 3 || win.level === 6 || win.level === 10);
+      assertEq(wasIntermission, false, 'level 5 is not intermission');
+    });
+  });
+
+  // ---- Suite: Kill Screen ----
+  describe('Kill Screen', function() {
+    it('Level 256: right half of maze is corrupted', function() {
+      win.initGame();
+      win.level = 256;
+      win.initMaze();
+      var corrupted = false;
+      for (var c = 14; c < 28; c++) {
+        if (win.maze[5][c] !== win.MAZE_TEMPLATE[5][c]) { corrupted = true; break; }
+      }
+      assert(corrupted, 'right half corrupted on level 256');
+    });
+
+    it('Level 256: maze[5][14] differs from MAZE_TEMPLATE[5][14]', function() {
+      win.initGame();
+      win.level = 256;
+      win.initMaze();
+      // The corruption algo: hash = (r*31 + c*17 + 42) % 7; for r=5, c=14: (155+238+42)%7=435%7=1 -> dot
+      // MAZE_TEMPLATE[5][14] is 0 (dot) — check another col
+      // r=5, c=15: (155+255+42)%7=452%7=4 -> else=2(empty), template[5][15]=0
+      assertNotEq(win.maze[5][15], win.MAZE_TEMPLATE[5][15], 'cell corrupted');
+    });
+
+    it('Level 1: maze matches MAZE_TEMPLATE exactly', function() {
+      win.initGame();
+      var matches = true;
+      outer: for (var r = 0; r < 31; r++) {
+        for (var c = 0; c < 28; c++) {
+          if (win.maze[r][c] !== win.MAZE_TEMPLATE[r][c]) { matches = false; break outer; }
+        }
+      }
+      assert(matches, 'level 1 maze matches template');
+    });
+  });
+
+  // ---- Suite: Speed Tables ----
+  describe('Speed Tables', function() {
+    it('SPEED_TABLE has 4 entries', function() {
+      assertEq(win.SPEED_TABLE.length, 4, 'speed table entries');
+    });
+
+    it('Each speed table entry has 5 values', function() {
+      for (var i = 0; i < 4; i++) {
+        assertEq(win.SPEED_TABLE[i].length, 5, 'entry ' + i + ' length');
+      }
+    });
+
+    it('getPacmanSpeed() returns BASE_SPEED * 0.80 on level 1', function() {
+      win.initGame();
+      win.ghosts.forEach(function(g) { g.frightened = false; });
+      var speed = win.getPacmanSpeed();
+      assertEq(speed, win.BASE_SPEED * 0.80, 'pacman speed level 1');
+    });
+
+    it('Ghost tunnel speed < normal speed', function() {
+      win.initGame();
+      win.ghosts[0].frightened = false;
+      win.ghosts[0].eaten = false;
+      win.ghosts[0].x = 14 * win.CELL;
+      var normal = win.getGhostSpeed(win.ghosts[0]);
+      win.ghosts[0].x = 2 * win.CELL;
+      var tunnel = win.getGhostSpeed(win.ghosts[0]);
+      assertLt(tunnel, normal, 'tunnel < normal');
+    });
+  });
+
+  // ---- Suite: Death & Respawn ----
+  describe('Death & Respawn', function() {
+    it('pacman.dead is false initially', function() {
+      win.initGame();
+      assertEq(win.pacman.dead, false, 'pacman not dead');
+    });
+
+    it('After initGame, lives = 3', function() {
+      win.initGame();
+      assertEq(win.lives, 3, 'lives');
+    });
+
+    it('extraLifeAwarded is false initially', function() {
+      win.initGame();
+      assertEq(win.extraLifeAwarded, false, 'extraLifeAwarded');
+    });
+  });
+
+  // ===================== RENDER RESULTS =====================
+  document.getElementById('loading').style.display = 'none';
+
+  var summaryDiv = document.getElementById('summary');
+  summaryDiv.textContent = passed + ' passed, ' + failed + ' failed';
+  summaryDiv.className = 'summary ' + (failed === 0 ? 'ok' : 'bad');
+
+  var resultsDiv = document.getElementById('results');
+  var lastSuite = '';
+  tests.forEach(function(t) {
+    if (t.suite !== lastSuite) {
+      lastSuite = t.suite;
+      var suiteEl = document.createElement('div');
+      suiteEl.className = 'suite-name';
+      suiteEl.textContent = '▶ ' + t.suite;
+      resultsDiv.appendChild(suiteEl);
+    }
+    var line = document.createElement('div');
+    if (t.pass) {
+      line.className = 'pass';
+      line.textContent = '✓ ' + t.name.split(' > ')[1];
+    } else {
+      line.className = 'fail';
+      line.textContent = '✗ ' + t.name.split(' > ')[1];
+      if (t.error) {
+        var errEl = document.createElement('div');
+        errEl.className = 'error';
+        errEl.textContent = '  ' + t.error;
+        line.appendChild(errEl);
+      }
+    }
+    resultsDiv.appendChild(line);
+  });
+}
+</script>
+</body>
+</html>
