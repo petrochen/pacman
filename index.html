@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>PAC-MAN v5</title>
+<title>PAC-MAN v6</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -126,7 +126,7 @@
   </div>
 </div>
 
-<div id="version-tag">v5</div>
+<div id="version-tag">v6</div>
 
 <script>
 // ===================== CONSTANTS =====================
@@ -194,6 +194,41 @@ var lastTime = 0;
 var accumulator = 0;
 var STEP = 1000/60;
 var gameStarted = false;
+
+// Chase/Scatter mode switching (durations in ms)
+// [scatter, chase, scatter, chase, scatter, chase, scatter, chase_forever]
+var MODE_DURATIONS_L1 = [7000, 20000, 7000, 20000, 5000, 20000, 5000, Infinity];
+var MODE_DURATIONS_L2 = [7000, 20000, 7000, 20000, 5000, 1033*16.67, 1, Infinity];
+var MODE_DURATIONS_L5 = [5000, 20000, 5000, 20000, 5000, 1037*16.67, 1, Infinity];
+var modeTimer = 0;
+var modeIndex = 0;
+var globalGhostMode = 'scatter'; // 'scatter' or 'chase'
+
+// Fruit system
+var FRUIT_TYPES = [
+  { name: 'cherry',     points: 100,  color: '#FF0000', appear: [70, 170] },
+  { name: 'strawberry', points: 300,  color: '#FF6B9D', appear: [70, 170] },
+  { name: 'orange',     points: 500,  color: '#FFB852', appear: [70, 170] },
+  { name: 'apple',      points: 700,  color: '#FF0000', appear: [70, 170] },
+  { name: 'melon',      points: 1000, color: '#00FF00', appear: [70, 170] },
+  { name: 'galaxian',   points: 2000, color: '#00BFFF', appear: [70, 170] },
+  { name: 'bell',       points: 3000, color: '#FFD700', appear: [70, 170] },
+  { name: 'key',        points: 5000, color: '#00FFFF', appear: [70, 170] }
+];
+var fruit = null; // { type, x, y, timer }
+var fruitVisible = false;
+var totalDotsEaten = 0;
+var fruitSpawned = [false, false]; // for 70 and 170 thresholds
+
+// Speed tables (percentage of max speed per level)
+// [pacman_normal, pacman_fright, ghost_normal, ghost_fright, ghost_tunnel]
+var SPEED_TABLE = [
+  [0.80, 0.90, 0.75, 0.50, 0.40], // Level 1
+  [0.90, 0.95, 0.85, 0.55, 0.45], // Level 2-4
+  [1.00, 1.00, 0.95, 0.60, 0.50], // Level 5-20
+  [0.90, 1.00, 0.95, 0.60, 0.50]  // Level 21+
+];
+var BASE_SPEED = 2.5; // max speed in pixels per frame
 
 // ===================== RESIZE =====================
 function resize() {
@@ -273,7 +308,7 @@ function createGhost(index) {
     y: GHOST_START[index].y,
     dir: { x: index === 0 ? 1 : 0, y: index === 0 ? 0 : -1 },
     speed: 1.8,
-    mode: index === 0 ? 'scatter' : 'house',
+    mode: index === 0 ? globalGhostMode : 'house',
     frightenedTimer: 0,
     flashTimer: 0,
     eaten: false,
@@ -353,13 +388,14 @@ function moveGhost(g) {
     var dist = Math.sqrt(dx*dx + dy*dy);
     if (dist < 4) {
       g.eaten = false;
-      g.mode = 'scatter';
+      g.mode = globalGhostMode;
       g.x = GHOST_START[1].x;
       g.y = GHOST_START[1].y;
       return;
     }
-    g.x += (dx/dist) * 3;
-    g.y += (dy/dist) * 3;
+    var eatenSpeed = BASE_SPEED * 1.5;
+    g.x += (dx/dist) * eatenSpeed;
+    g.y += (dy/dist) * eatenSpeed;
     g.eyeDir = { x: dx > 0 ? 1 : -1, y: dy > 0 ? 1 : -1 };
     return;
   }
@@ -412,7 +448,7 @@ function moveGhost(g) {
     }
   }
 
-  var spd = g.frightened ? g.speed * 0.5 : g.speed;
+  var spd = g.speed;
   var nx = g.x + g.dir.x * spd;
   var ny = g.y + g.dir.y * spd;
 
@@ -440,7 +476,7 @@ function releaseGhosts() {
         if (dist < 4) {
           g.x = exitX;
           g.y = exitY;
-          g.mode = 'scatter';
+          g.mode = globalGhostMode;
           g.dir = { x: -1, y: 0 };
         } else {
           g.x += (dx/dist) * 2;
@@ -449,6 +485,121 @@ function releaseGhosts() {
       }
     }
   }
+}
+
+// ===================== MODE SWITCHING =====================
+function getModeDurations() {
+  if (level === 1) return MODE_DURATIONS_L1;
+  if (level <= 4) return MODE_DURATIONS_L2;
+  return MODE_DURATIONS_L5;
+}
+
+function updateGhostMode(dt) {
+  if (frightenTimer > 0) return; // don't advance mode timer during frighten
+  var durations = getModeDurations();
+  if (modeIndex >= durations.length) return; // permanent chase
+  modeTimer += dt;
+  if (modeTimer >= durations[modeIndex]) {
+    modeTimer = 0;
+    modeIndex++;
+    globalGhostMode = (modeIndex % 2 === 0) ? 'scatter' : 'chase';
+    // Reverse all active ghosts
+    for (var i = 0; i < ghosts.length; i++) {
+      var g = ghosts[i];
+      if (g.mode !== 'house' && !g.eaten && !g.frightened) {
+        g.dir = { x: -g.dir.x, y: -g.dir.y };
+        g.mode = globalGhostMode;
+      }
+    }
+  }
+}
+
+// ===================== SPEED HELPERS =====================
+function getSpeedIndex() {
+  if (level === 1) return 0;
+  if (level <= 4) return 1;
+  if (level <= 20) return 2;
+  return 3;
+}
+
+function getPacmanSpeed() {
+  var idx = getSpeedIndex();
+  var anyFrightened = ghosts && ghosts.some(function(g) { return g.frightened; });
+  return BASE_SPEED * (anyFrightened ? SPEED_TABLE[idx][1] : SPEED_TABLE[idx][0]);
+}
+
+function getGhostSpeed(g) {
+  var idx = getSpeedIndex();
+  if (g.eaten) return BASE_SPEED * 1.5; // eyes rush home
+  if (g.frightened) return BASE_SPEED * SPEED_TABLE[idx][3];
+  // Tunnel slowdown
+  var gc = Math.round(g.x / CELL);
+  if (gc <= 5 || gc >= COLS - 6) return BASE_SPEED * SPEED_TABLE[idx][4];
+  return BASE_SPEED * SPEED_TABLE[idx][2];
+}
+
+// ===================== FRUIT =====================
+function getFruitType() {
+  var idx = Math.min(level - 1, FRUIT_TYPES.length - 1);
+  return FRUIT_TYPES[idx];
+}
+
+function spawnFruit() {
+  var ft = getFruitType();
+  fruit = {
+    type: ft,
+    x: 13.5 * CELL,
+    y: 17 * CELL,
+    timer: 600 // ~10 seconds at 60fps
+  };
+  fruitVisible = true;
+}
+
+function updateFruit() {
+  if (!fruit) return;
+  fruit.timer--;
+  if (fruit.timer <= 0) {
+    fruit = null;
+    fruitVisible = false;
+    return;
+  }
+  // Check if pacman eats fruit
+  var dx = Math.abs(pacman.x - fruit.x);
+  var dy = Math.abs(pacman.y - fruit.y);
+  if (dx < CELL * 0.8 && dy < CELL * 0.8) {
+    score += fruit.type.points;
+    if (score > highScore) highScore = score;
+    playEatGhost(); // reuse sound
+    fruit = null;
+    fruitVisible = false;
+  }
+}
+
+function drawFruit() {
+  if (!fruit) return;
+  var cx = fruit.x + CELL / 2;
+  var cy = fruit.y + CELL / 2;
+  var ft = fruit.type;
+
+  // Draw fruit as a colored circle with stem
+  ctx.fillStyle = ft.color;
+  ctx.beginPath();
+  ctx.arc(cx, cy + 1, CELL / 2 - 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Stem
+  ctx.strokeStyle = '#00AA00';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - CELL / 2 + 2);
+  ctx.lineTo(cx + 2, cy - CELL / 2 - 1);
+  ctx.stroke();
+
+  // Highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.beginPath();
+  ctx.arc(cx - 2, cy - 1, 2, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 // ===================== DRAWING =====================
@@ -745,7 +896,7 @@ function drawStartScreen() {
   // Version
   ctx.fillStyle = '#333';
   ctx.font = '8px monospace';
-  ctx.fillText('v5', cx, 475);
+  ctx.fillText('v6', cx, 475);
 }
 
 function drawGameOverScreen() {
@@ -910,6 +1061,13 @@ function initGame() {
   frightenDuration = 8000;
   frightenTimer = 0;
   eatGhostScore = 200;
+  modeTimer = 0;
+  modeIndex = 0;
+  globalGhostMode = 'scatter';
+  totalDotsEaten = 0;
+  fruitSpawned = [false, false];
+  fruit = null;
+  fruitVisible = false;
   pacman = createPacman();
   ghosts = [0,1,2,3].map(createGhost);
   gameState = 'ready';
@@ -921,6 +1079,13 @@ function initLevel() {
   frightenDuration = Math.max(2000, 8000 - level * 500);
   frightenTimer = 0;
   eatGhostScore = 200;
+  modeTimer = 0;
+  modeIndex = 0;
+  globalGhostMode = 'scatter';
+  totalDotsEaten = 0;
+  fruitSpawned = [false, false];
+  fruit = null;
+  fruitVisible = false;
   pacman = createPacman();
   ghosts = [0,1,2,3].map(createGhost);
   gameState = 'ready';
@@ -968,12 +1133,17 @@ function movePacman() {
       score += 10;
       if (score > highScore) highScore = score;
       dots--;
+      totalDotsEaten++;
       playWaka();
+      // Spawn fruit at thresholds
+      if (totalDotsEaten >= 70 && !fruitSpawned[0]) { fruitSpawned[0] = true; spawnFruit(); }
+      if (totalDotsEaten >= 170 && !fruitSpawned[1]) { fruitSpawned[1] = true; spawnFruit(); }
     } else if (cell === 3) {
       maze[tr][tc] = 2;
       score += 50;
       if (score > highScore) highScore = score;
       powerPellets--;
+      totalDotsEaten++;
       frighten();
       playPowerPellet();
     }
@@ -981,8 +1151,13 @@ function movePacman() {
 
   if (dots <= 0) {
     level++;
-    setTimeout(function() { initLevel(); }, 1500);
     gameState = 'won';
+    setTimeout(function() {
+      try { initLevel(); } catch(err) {
+        gameState = 'start';
+        gameStarted = false;
+      }
+    }, 1500);
   }
 
   // Animate mouth
@@ -1024,11 +1199,12 @@ function checkCollisions() {
         playEatGhost();
         if (score > highScore) highScore = score;
         eatGhostScore *= 2;
-      } else if (!g.eaten && !pacman.dead) {
+      } else if (!g.eaten && !pacman.dead && gameState === 'playing') {
         pacman.dead = true;
         gameState = 'dead';
         playDeath();
         setTimeout(function() {
+          if (gameState !== 'dead') return;
           lives--;
           if (lives <= 0) {
             gameState = 'gameover';
@@ -1037,6 +1213,8 @@ function checkCollisions() {
             pacman = createPacman();
             ghosts = [0,1,2,3].map(createGhost);
             frightenTimer = 0;
+            modeTimer = 0;
+            modeIndex = 0;
             gameState = 'ready';
             readyTimer = 120;
           }
@@ -1061,10 +1239,16 @@ function update(dt) {
 
   if (gameState !== 'playing') return;
 
+  // Update speeds dynamically
+  pacman.speed = getPacmanSpeed();
+
   movePacman();
   releaseGhosts();
+  updateGhostMode(STEP);
+  updateFruit();
 
   for (var i = 0; i < ghosts.length; i++) {
+    ghosts[i].speed = getGhostSpeed(ghosts[i]);
     moveGhost(ghosts[i]);
   }
 
@@ -1074,6 +1258,9 @@ function update(dt) {
       frightenTimer = 0;
       for (var j = 0; j < ghosts.length; j++) {
         ghosts[j].frightened = false;
+        if (ghosts[j].mode !== 'house' && !ghosts[j].eaten) {
+          ghosts[j].mode = globalGhostMode;
+        }
       }
     }
   }
@@ -1115,6 +1302,7 @@ function render() {
   }
 
   for (var j = 0; j < ghosts.length; j++) drawGhost(ghosts[j]);
+  drawFruit();
   drawPacman();
   drawLives();
   drawScore();
