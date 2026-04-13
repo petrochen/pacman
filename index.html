@@ -1024,15 +1024,21 @@ function setDir(dx, dy) {
 document.addEventListener('keydown', function(e) {
   if (gameState === 'start' || gameState === 'gameover') {
     startGame();
+    e.preventDefault();
     return;
   }
+  var handled = false;
   switch(e.key) {
-    case 'ArrowLeft':  case 'a': setDir(-1, 0); break;
-    case 'ArrowRight': case 'd': setDir(1, 0); break;
-    case 'ArrowUp':    case 'w': setDir(0, -1); break;
-    case 'ArrowDown':  case 's': setDir(0, 1); break;
+    case 'ArrowLeft':  case 'a': setDir(-1, 0); handled = true; break;
+    case 'ArrowRight': case 'd': setDir(1, 0); handled = true; break;
+    case 'ArrowUp':    case 'w': setDir(0, -1); handled = true; break;
+    case 'ArrowDown':  case 's': setDir(0, 1); handled = true; break;
   }
-  e.preventDefault();
+  if (handled) e.preventDefault();
+});
+// Blur the start button after click so it doesn't capture subsequent keypresses
+document.getElementById('start-btn').addEventListener('click', function() {
+  this.blur();
 });
 
 // D-pad buttons
