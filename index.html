@@ -6,17 +6,25 @@
 <title>PAC-MAN v6</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     background: #000;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: flex-start;
-    min-height: 100vh;
-    min-height: -webkit-fill-available;
+    height: 100vh;
+    height: 100dvh;
     font-family: 'Press Start 2P', monospace;
     overflow: hidden;
     -webkit-tap-highlight-color: transparent;
+  }
+  #game-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    max-width: 448px;
+    height: 100%;
   }
   #header {
     color: #fff;
@@ -26,11 +34,16 @@
     align-items: center;
     padding: 4px 8px;
     font-size: 10px;
+    flex-shrink: 0;
   }
   #score-label { color: #fff; }
   #hiscore-label { color: #fff; }
   #score-val { color: #fff; font-size: 12px; }
   #hiscore-val { color: #fff; font-size: 12px; }
+  #canvas-wrap {
+    position: relative;
+    flex-shrink: 0;
+  }
   canvas {
     display: block;
     image-rendering: pixelated;
@@ -41,29 +54,96 @@
     width: 100%;
     padding: 2px 8px;
     justify-content: space-between;
+    flex-shrink: 0;
   }
   #lives-canvas { display: block; }
+
+  /* ---- Start / Game Over overlay ---- */
+  #overlay {
+    display: none;
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+  }
+  #overlay.visible { display: flex; }
+  #overlay-title {
+    font-size: 28px;
+    font-weight: bold;
+    color: #FFD700;
+    text-shadow: 0 0 20px #FFD700;
+    margin-bottom: 24px;
+  }
+  #overlay-title.gameover { color: #FF0000; text-shadow: 0 0 20px #FF0000; font-size: 20px; }
+  #overlay-score { color: #fff; font-size: 10px; margin-bottom: 16px; display: none; }
+  #ghost-info { margin-bottom: 20px; }
+  .ghost-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 6px 0;
+    font-size: 8px;
+  }
+  .ghost-row canvas { flex-shrink: 0; }
+  .ghost-name { min-width: 56px; }
+  .ghost-desc { color: #ccc; }
+  #overlay-hints {
+    color: #ccc;
+    font-size: 8px;
+    text-align: center;
+    line-height: 1.8;
+    margin-bottom: 20px;
+  }
+  #start-btn {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 14px;
+    color: #000;
+    background: #FFD700;
+    border: none;
+    border-radius: 6px;
+    padding: 14px 32px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    animation: pulse-btn 1.2s ease-in-out infinite;
+  }
+  #start-btn:active { transform: scale(0.95); }
+  @keyframes pulse-btn {
+    0%, 100% { opacity: 0.85; }
+    50% { opacity: 1; box-shadow: 0 0 16px #FFD700; }
+  }
+  #overlay-hint-small {
+    color: #555;
+    font-size: 8px;
+    margin-top: 12px;
+  }
+
+  /* ---- D-pad (touch devices only) ---- */
   #dpad {
     display: none;
     flex-direction: column;
     align-items: center;
-    margin-top: 8px;
+    flex: 1;
+    justify-content: center;
     gap: 0;
     user-select: none;
     touch-action: none;
+    padding-bottom: env(safe-area-inset-bottom, 0);
   }
   #dpad.visible { display: flex; }
   .dpad-row { display: flex; gap: 0; }
   .dpad-btn {
-    width: 60px;
-    height: 60px;
-    background: rgba(255,255,255,0.15);
-    border: 2px solid rgba(255,255,255,0.3);
-    border-radius: 8px;
+    width: 68px;
+    height: 68px;
+    background: rgba(255,255,255,0.12);
+    border: 2px solid rgba(255,255,255,0.25);
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 24px;
+    font-size: 26px;
     color: white;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
@@ -72,22 +152,60 @@
   }
   .dpad-btn:active, .dpad-btn.pressed {
     background: rgba(255,255,0,0.35);
+    border-color: rgba(255,255,0,0.5);
   }
   .dpad-center {
-    width: 60px;
-    height: 60px;
+    width: 68px;
+    height: 68px;
     background: transparent;
   }
-  #version-tag {
+
+  /* ---- Desktop hint (keyboard) ---- */
+  #kb-hint {
+    display: none;
     color: #444;
     font-size: 8px;
-    padding: 4px;
+    padding: 8px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  #version-tag {
+    color: #333;
+    font-size: 8px;
+    padding: 2px;
     font-family: monospace;
+    flex-shrink: 0;
+  }
+
+  /* ---- Responsive breakpoints ---- */
+  /* Small phones (iPhone SE, 5) — height <= 580 */
+  @media (max-height: 580px) and (pointer: coarse) {
+    .dpad-btn, .dpad-center { width: 52px; height: 52px; }
+    .dpad-btn { font-size: 20px; }
+    #header { padding: 2px 6px; font-size: 8px; }
+    #score-val, #hiscore-val { font-size: 10px; }
+  }
+  /* Medium phones (iPhone 12/13/14, Pixel) */
+  @media (min-height: 581px) and (max-height: 750px) and (pointer: coarse) {
+    .dpad-btn, .dpad-center { width: 62px; height: 62px; }
+    .dpad-btn { font-size: 24px; }
+  }
+  /* Large phones / tablets (iPhone Pro Max, iPad) */
+  @media (min-height: 751px) and (pointer: coarse) {
+    .dpad-btn, .dpad-center { width: 74px; height: 74px; }
+    .dpad-btn { font-size: 28px; border-radius: 12px; }
+  }
+  /* Desktop / mouse devices — show keyboard hint, hide dpad */
+  @media (pointer: fine) {
+    #dpad.visible { display: none !important; }
+    #kb-hint { display: block; }
   }
 </style>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 </head>
 <body>
+<div id="game-container">
 
 <div id="header">
   <div>
@@ -101,7 +219,20 @@
   </div>
 </div>
 
-<canvas id="gameCanvas"></canvas>
+<div id="canvas-wrap">
+  <canvas id="gameCanvas"></canvas>
+  <div id="overlay" class="visible">
+    <div id="overlay-title">PAC-MAN</div>
+    <div id="ghost-info"></div>
+    <div id="overlay-hints">
+      Eat all dots to advance<br>
+      Power pellets let you hunt ghosts!
+    </div>
+    <div id="overlay-score"></div>
+    <button id="start-btn">INSERT COIN</button>
+    <div id="overlay-hint-small"></div>
+  </div>
+</div>
 
 <div id="lives-row">
   <canvas id="livesCanvas" width="120" height="20"></canvas>
@@ -126,7 +257,10 @@
   </div>
 </div>
 
+<div id="kb-hint">Arrow keys / WASD to move</div>
 <div id="version-tag">v6</div>
+
+</div><!-- /game-container -->
 
 <script>
 // ===================== CONSTANTS =====================
@@ -236,8 +370,12 @@ function resize() {
   var scale = maxW / (COLS * CELL);
   canvas.width = COLS * CELL;
   canvas.height = ROWS * CELL;
-  canvas.style.width = (COLS * CELL * scale) + 'px';
-  canvas.style.height = (ROWS * CELL * scale) + 'px';
+  var cw = Math.floor(COLS * CELL * scale);
+  var ch = Math.floor(ROWS * CELL * scale);
+  canvas.style.width = cw + 'px';
+  canvas.style.height = ch + 'px';
+  var wrap = document.getElementById('canvas-wrap');
+  if (wrap) { wrap.style.width = cw + 'px'; wrap.style.height = ch + 'px'; }
 }
 
 // ===================== MAZE =====================
@@ -792,155 +930,88 @@ function drawScore() {
   document.getElementById('level-display').textContent = 'LV ' + level;
 }
 
-// ===================== START SCREEN (drawn on canvas, no overlay) =====================
-function drawStartScreen() {
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+// ===================== OVERLAY (HTML-based start/gameover) =====================
+var overlay = null, overlayTitle = null, overlayScore = null, startBtn = null, overlayHintSmall = null, ghostInfoDiv = null, overlayHints = null;
 
-  var cx = canvas.width / 2;
+function initOverlayRefs() {
+  overlay = document.getElementById('overlay');
+  overlayTitle = document.getElementById('overlay-title');
+  overlayScore = document.getElementById('overlay-score');
+  startBtn = document.getElementById('start-btn');
+  overlayHintSmall = document.getElementById('overlay-hint-small');
+  ghostInfoDiv = document.getElementById('ghost-info');
+  overlayHints = document.getElementById('overlay-hints');
+}
 
-  // Title
-  ctx.fillStyle = '#FFD700';
-  ctx.font = 'bold 28px "Press Start 2P", monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('PAC-MAN', cx, 80);
-
-  // Glow effect
-  ctx.shadowColor = '#FFD700';
-  ctx.shadowBlur = 20;
-  ctx.fillText('PAC-MAN', cx, 80);
-  ctx.shadowBlur = 0;
-
-  // Ghost previews
+function buildGhostInfo() {
+  if (!ghostInfoDiv) return;
   var ghostColors = ['#FF0000','#FFB8FF','#00FFFF','#FFB852'];
   var ghostNames = ['BLINKY','PINKY','INKY','CLYDE'];
   var ghostDescs = ['chases','ambushes','tricks','wanders'];
+  ghostInfoDiv.innerHTML = '';
   for (var i = 0; i < 4; i++) {
-    var gy = 140 + i * 36;
-    // Draw a mini ghost
-    var gx = cx - 80;
-    ctx.fillStyle = ghostColors[i];
-    ctx.beginPath();
-    ctx.arc(gx, gy - 2, 8, Math.PI, 0, false);
-    ctx.lineTo(gx + 8, gy + 6);
-    ctx.lineTo(gx + 4, gy + 3);
-    ctx.lineTo(gx, gy + 6);
-    ctx.lineTo(gx - 4, gy + 3);
-    ctx.lineTo(gx - 8, gy + 6);
-    ctx.closePath();
-    ctx.fill();
-    // Eyes
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(gx - 3, gy - 3, 2.5, 0, Math.PI*2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(gx + 3, gy - 3, 2.5, 0, Math.PI*2);
-    ctx.fill();
-    ctx.fillStyle = '#00f';
-    ctx.beginPath();
-    ctx.arc(gx - 2, gy - 3, 1.5, 0, Math.PI*2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(gx + 4, gy - 3, 1.5, 0, Math.PI*2);
-    ctx.fill();
-    // Name
-    ctx.fillStyle = ghostColors[i];
-    ctx.font = '8px "Press Start 2P", monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(ghostNames[i], gx + 16, gy);
-    ctx.fillStyle = '#ccc';
-    ctx.fillText(ghostDescs[i], gx + 16 + ghostNames[i].length * 9 + 8, gy);
+    var row = document.createElement('div');
+    row.className = 'ghost-row';
+    // Mini ghost canvas
+    var gc = document.createElement('canvas');
+    gc.width = 18; gc.height = 18;
+    var gctx = gc.getContext('2d');
+    gctx.fillStyle = ghostColors[i];
+    gctx.beginPath();
+    gctx.arc(9, 7, 7, Math.PI, 0, false);
+    gctx.lineTo(16, 16);
+    gctx.lineTo(13, 13);
+    gctx.lineTo(9, 16);
+    gctx.lineTo(5, 13);
+    gctx.lineTo(2, 16);
+    gctx.closePath();
+    gctx.fill();
+    gctx.fillStyle = '#fff';
+    gctx.beginPath(); gctx.arc(7, 6, 2, 0, Math.PI*2); gctx.fill();
+    gctx.beginPath(); gctx.arc(11, 6, 2, 0, Math.PI*2); gctx.fill();
+    gctx.fillStyle = '#00f';
+    gctx.beginPath(); gctx.arc(8, 6, 1, 0, Math.PI*2); gctx.fill();
+    gctx.beginPath(); gctx.arc(12, 6, 1, 0, Math.PI*2); gctx.fill();
+    row.appendChild(gc);
+    var name = document.createElement('span');
+    name.className = 'ghost-name';
+    name.style.color = ghostColors[i];
+    name.textContent = ghostNames[i];
+    row.appendChild(name);
+    var desc = document.createElement('span');
+    desc.className = 'ghost-desc';
+    desc.textContent = ghostDescs[i];
+    row.appendChild(desc);
+    ghostInfoDiv.appendChild(row);
   }
-
-  // Instructions
-  ctx.fillStyle = '#ccc';
-  ctx.font = '8px "Press Start 2P", monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText('Eat all dots to advance', cx, 310);
-  ctx.fillText('Power pellets hunt ghosts!', cx, 330);
-
-  // INSERT COIN button area (drawn on canvas)
-  var btnW = 200;
-  var btnH = 40;
-  var btnX = cx - btnW/2;
-  var btnY = 370;
-
-  // Pulsing effect
-  var pulse = Math.sin(Date.now() / 300) * 0.15 + 0.85;
-  ctx.fillStyle = 'rgba(255, 215, 0, ' + pulse + ')';
-  ctx.beginPath();
-  ctx.moveTo(btnX + 6, btnY);
-  ctx.lineTo(btnX + btnW - 6, btnY);
-  ctx.quadraticCurveTo(btnX + btnW, btnY, btnX + btnW, btnY + 6);
-  ctx.lineTo(btnX + btnW, btnY + btnH - 6);
-  ctx.quadraticCurveTo(btnX + btnW, btnY + btnH, btnX + btnW - 6, btnY + btnH);
-  ctx.lineTo(btnX + 6, btnY + btnH);
-  ctx.quadraticCurveTo(btnX, btnY + btnH, btnX, btnY + btnH - 6);
-  ctx.lineTo(btnX, btnY + 6);
-  ctx.quadraticCurveTo(btnX, btnY, btnX + 6, btnY);
-  ctx.fill();
-
-  ctx.fillStyle = '#000';
-  ctx.font = '12px "Press Start 2P", monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('INSERT COIN', cx, btnY + btnH/2);
-
-  // Tap anywhere hint
-  ctx.fillStyle = '#666';
-  ctx.font = '8px "Press Start 2P", monospace';
-  ctx.fillText('TAP ANYWHERE', cx, 440);
-
-  // Version
-  ctx.fillStyle = '#333';
-  ctx.font = '8px monospace';
-  ctx.fillText('v6', cx, 475);
 }
 
-function drawGameOverScreen() {
-  ctx.fillStyle = 'rgba(0,0,0,0.8)';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+function showOverlay(mode) {
+  if (!overlay) return;
+  var isMobile = window.matchMedia('(pointer: coarse)').matches;
+  if (mode === 'start') {
+    overlayTitle.textContent = 'PAC-MAN';
+    overlayTitle.className = '';
+    overlayScore.style.display = 'none';
+    ghostInfoDiv.style.display = '';
+    overlayHints.style.display = '';
+    startBtn.textContent = 'INSERT COIN';
+    overlayHintSmall.textContent = isMobile ? '' : 'or press any key';
+  } else {
+    overlayTitle.textContent = 'GAME OVER';
+    overlayTitle.className = 'gameover';
+    overlayScore.textContent = 'SCORE: ' + score;
+    overlayScore.style.display = 'block';
+    ghostInfoDiv.style.display = 'none';
+    overlayHints.style.display = 'none';
+    startBtn.textContent = 'PLAY AGAIN';
+    overlayHintSmall.textContent = isMobile ? '' : 'or press any key';
+  }
+  overlay.classList.add('visible');
+}
 
-  var cx = canvas.width / 2;
-  ctx.fillStyle = '#FF0000';
-  ctx.font = 'bold 20px "Press Start 2P", monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('GAME OVER', cx, 180);
-
-  ctx.fillStyle = '#fff';
-  ctx.font = '10px "Press Start 2P", monospace';
-  ctx.fillText('SCORE: ' + score, cx, 230);
-
-  // Play Again button
-  var btnW = 200;
-  var btnH = 40;
-  var btnX = cx - btnW/2;
-  var btnY = 280;
-
-  var pulse = Math.sin(Date.now() / 300) * 0.15 + 0.85;
-  ctx.fillStyle = 'rgba(255, 215, 0, ' + pulse + ')';
-  ctx.beginPath();
-  ctx.moveTo(btnX + 6, btnY);
-  ctx.lineTo(btnX + btnW - 6, btnY);
-  ctx.quadraticCurveTo(btnX + btnW, btnY, btnX + btnW, btnY + 6);
-  ctx.lineTo(btnX + btnW, btnY + btnH - 6);
-  ctx.quadraticCurveTo(btnX + btnW, btnY + btnH, btnX + btnW - 6, btnY + btnH);
-  ctx.lineTo(btnX + 6, btnY + btnH);
-  ctx.quadraticCurveTo(btnX, btnY + btnH, btnX, btnY + btnH - 6);
-  ctx.lineTo(btnX, btnY + 6);
-  ctx.quadraticCurveTo(btnX, btnY, btnX + 6, btnY);
-  ctx.fill();
-
-  ctx.fillStyle = '#000';
-  ctx.font = '12px "Press Start 2P", monospace';
-  ctx.fillText('PLAY AGAIN', cx, btnY + btnH/2);
-
-  ctx.fillStyle = '#666';
-  ctx.font = '8px "Press Start 2P", monospace';
-  ctx.fillText('TAP ANYWHERE', cx, btnY + btnH + 30);
+function hideOverlay() {
+  if (overlay) overlay.classList.remove('visible');
 }
 
 // ===================== INPUT =====================
@@ -1019,38 +1090,13 @@ function onSwipeEnd(e) {
 canvas.addEventListener('touchstart', onSwipeStart, { passive: true });
 canvas.addEventListener('touchend', onSwipeEnd, { passive: true });
 
-// ===================== CANVAS TAP TO START =====================
-// This is the primary start mechanism - a pointerdown/touchstart on the canvas
-function handleCanvasTap(e) {
-  if (gameState === 'start' || gameState === 'gameover') {
-    if (e.preventDefault) e.preventDefault();
-    startGame();
-  }
-}
-
-if (window.PointerEvent) {
-  canvas.addEventListener('pointerdown', handleCanvasTap, false);
-} else {
-  canvas.addEventListener('touchstart', function(e) {
-    if (gameState === 'start' || gameState === 'gameover') {
-      e.preventDefault();
-      startGame();
-    }
-  }, { passive: false });
-  canvas.addEventListener('mousedown', handleCanvasTap, false);
-}
-
-// Also listen on the whole document body as a fallback
-document.body.addEventListener('pointerdown', function(e) {
-  if (gameState === 'start' || gameState === 'gameover') {
-    startGame();
-  }
+// ===================== START BUTTON =====================
+// Only the real HTML button triggers start — no body/canvas wide tap
+document.getElementById('start-btn').addEventListener('click', function(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  startGame();
 }, false);
-document.body.addEventListener('touchstart', function(e) {
-  if (gameState === 'start' || gameState === 'gameover') {
-    startGame();
-  }
-}, { passive: true });
 
 // ===================== GAME LOGIC =====================
 function initGame() {
@@ -1269,18 +1315,36 @@ function update(dt) {
 }
 
 // ===================== RENDER =====================
+var prevOverlayState = '';
+
 function render() {
+  // Manage HTML overlay visibility
+  if (gameState === 'start' && prevOverlayState !== 'start') {
+    showOverlay('start');
+    prevOverlayState = 'start';
+  } else if (gameState === 'gameover' && prevOverlayState !== 'gameover') {
+    showOverlay('gameover');
+    prevOverlayState = 'gameover';
+  } else if (gameState !== 'start' && gameState !== 'gameover' && prevOverlayState !== '') {
+    hideOverlay();
+    prevOverlayState = '';
+  }
+
   if (gameState === 'start') {
-    drawStartScreen();
+    // Draw empty black canvas behind overlay
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     return;
   }
 
   if (gameState === 'gameover') {
-    // Draw the maze behind the game over screen
+    // Draw the maze behind the overlay
     drawMaze();
     for (var i = 0; i < ghosts.length; i++) drawGhost(ghosts[i]);
     drawPacman();
-    drawGameOverScreen();
+    // Darken
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     drawLives();
     drawScore();
     return;
@@ -1291,7 +1355,7 @@ function render() {
 
   if (gameState === 'ready') {
     ctx.fillStyle = '#FFD700';
-    ctx.font = 'bold 10px monospace';
+    ctx.font = 'bold 10px "Press Start 2P", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     ctx.fillText('READY!', COLS/2 * CELL, 20 * CELL);
@@ -1341,7 +1405,10 @@ function startGame() {
   if (gameStarted && gameState !== 'gameover') return;
   gameStarted = true;
 
-  // Show d-pad
+  hideOverlay();
+  prevOverlayState = '';
+
+  // Show d-pad (touch devices only — CSS hides it on desktop)
   var dpad = document.getElementById('dpad');
   if (dpad) dpad.classList.add('visible');
 
@@ -1538,6 +1605,9 @@ ctx = canvas.getContext('2d');
 livesCanvas = document.getElementById('livesCanvas');
 livesCtx = livesCanvas.getContext('2d');
 
+initOverlayRefs();
+buildGhostInfo();
+
 try {
   highScore = parseInt(localStorage.getItem('pacman_hiscore') || '0', 10);
 } catch(e) {
@@ -1548,18 +1618,11 @@ document.getElementById('hiscore-val').textContent = highScore;
 window.addEventListener('resize', resize);
 resize();
 
-// Draw start screen immediately
+// Show start overlay
 gameState = 'start';
-drawStartScreen();
-
-// Animate the start screen (pulsing button)
-function animateStartScreen() {
-  if (gameState === 'start' || gameState === 'gameover') {
-    render();
-  }
-  requestAnimationFrame(animateStartScreen);
-}
-requestAnimationFrame(animateStartScreen);
+showOverlay('start');
+ctx.fillStyle = '#000';
+ctx.fillRect(0, 0, canvas.width, canvas.height);
 
 // Save high score on unload
 window.addEventListener('beforeunload', function() {
