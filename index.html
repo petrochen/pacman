@@ -353,6 +353,7 @@ var fruit = null; // { type, x, y, timer }
 var fruitVisible = false;
 var totalDotsEaten = 0;
 var fruitSpawned = [false, false]; // for 70 and 170 thresholds
+var eatSlowFrames = 0; // frames to skip Pac-Man movement after eating
 
 // Speed tables (percentage of max speed per level)
 // [pacman_normal, pacman_fright, ghost_normal, ghost_fright, ghost_tunnel]
@@ -363,6 +364,13 @@ var SPEED_TABLE = [
   [0.90, 1.00, 0.95, 0.60, 0.50]  // Level 21+
 ];
 var BASE_SPEED = 2.5; // max speed in pixels per frame
+
+var ELROY_THRESHOLDS = [
+  { dots1: 20, dots2: 10 },  // Level 1
+  { dots1: 30, dots2: 15 },  // Level 2
+  { dots1: 40, dots2: 20 },  // Level 3-4
+  { dots1: 50, dots2: 25 }   // Level 5+
+];
 
 // ===================== RESIZE =====================
 function resize() {
@@ -734,6 +742,13 @@ function getGhostSpeed(g) {
   // Tunnel slowdown
   var gc = Math.round(g.x / CELL);
   if (gc <= 5 || gc >= COLS - 6) return BASE_SPEED * SPEED_TABLE[idx][4];
+  // Elroy mode: Blinky speeds up when few dots remain
+  if (g.index === 0 && !g.frightened && !g.eaten) {
+    var elroyIdx = level === 1 ? 0 : level === 2 ? 1 : level <= 4 ? 2 : 3;
+    var thresholds = ELROY_THRESHOLDS[elroyIdx];
+    if (dots <= thresholds.dots2) return BASE_SPEED * (SPEED_TABLE[idx][2] + 0.10);
+    if (dots <= thresholds.dots1) return BASE_SPEED * (SPEED_TABLE[idx][2] + 0.05);
+  }
   return BASE_SPEED * SPEED_TABLE[idx][2];
 }
 
@@ -1181,6 +1196,7 @@ function initGame() {
   fruitSpawned = [false, false];
   fruit = null;
   fruitVisible = false;
+  eatSlowFrames = 0;
   pacman = createPacman();
   ghosts = [0,1,2,3].map(createGhost);
   gameState = 'ready';
@@ -1199,6 +1215,7 @@ function initLevel() {
   fruitSpawned = [false, false];
   fruit = null;
   fruitVisible = false;
+  eatSlowFrames = 0;
   pacman = createPacman();
   ghosts = [0,1,2,3].map(createGhost);
   gameState = 'ready';
@@ -1207,6 +1224,7 @@ function initLevel() {
 
 function movePacman() {
   if (pacman.dead) return;
+  if (eatSlowFrames > 0) { eatSlowFrames--; return; } // skip movement while eating
 
   var alignedX = isAligned(pacman.x);
   var alignedY = isAligned(pacman.y);
@@ -1247,6 +1265,7 @@ function movePacman() {
       if (score > highScore) highScore = score;
       dots--;
       totalDotsEaten++;
+      eatSlowFrames = 1; // 1 frame slowdown for dot
       playWaka();
       // Spawn fruit at thresholds
       if (totalDotsEaten >= 70 && !fruitSpawned[0]) { fruitSpawned[0] = true; spawnFruit(); }
@@ -1257,6 +1276,7 @@ function movePacman() {
       if (score > highScore) highScore = score;
       powerPellets--;
       totalDotsEaten++;
+      eatSlowFrames = 3; // 3 frames slowdown for pellet
       frighten();
       playPowerPellet();
     }
@@ -1330,6 +1350,12 @@ function checkCollisions() {
             modeIndex = 0;
             gameState = 'ready';
             readyTimer = 120;
+            // After death: force faster ghost release (global counter mode)
+            for (var k = 0; k < ghosts.length; k++) {
+              if (ghosts[k].mode === 'house') {
+                ghosts[k].releaseDots = Math.max(0, ghosts[k].releaseDots - totalDotsEaten);
+              }
+            }
           }
         }, 2000);
       }
