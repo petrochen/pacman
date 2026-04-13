@@ -533,6 +533,7 @@ function getGhostTarget(g) {
 
 function moveGhost(g) {
   if (g.mode === 'house') {
+    if (g.exitPhase > 0) return; // being moved by releaseGhosts
     g.bounceY += g.bounceDir * 0.5;
     if (Math.abs(g.bounceY) > CELL * 0.5) g.bounceDir *= -1;
     g.y = GHOST_START[g.index].y + g.bounceY;
