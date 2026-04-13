@@ -439,21 +439,34 @@ var GHOST_START = [
 var GHOST_EXIT = { x: 14 * CELL, y: 11 * CELL };  // grid-aligned exit point
 var GHOST_HOUSE_CENTER = { x: 13.5 * CELL, y: 14 * CELL };  // for eaten return
 
-var GHOST_RELEASE_DOTS = [0, 0, 30, 60];
+// Dots eaten before ghost leaves house (per level tier)
+var GHOST_RELEASE_DOTS_L1 = [0, 0, 30, 60];
+var GHOST_RELEASE_DOTS_L2 = [0, 0, 0, 50];
+var GHOST_RELEASE_DOTS_L3 = [0, 0, 0, 0];
+var GHOST_EXIT_DIRS = [1, -1, 1, -1]; // alternate left/right on exit
+var GHOST_HOUSE_IDLE_LIMIT = 240; // 4 seconds backup timer (if no dots eaten)
+
+function getReleaseDots(index) {
+  if (level === 1) return GHOST_RELEASE_DOTS_L1[index];
+  if (level <= 2) return GHOST_RELEASE_DOTS_L2[index];
+  return GHOST_RELEASE_DOTS_L3[index];
+}
 
 function createGhost(index) {
   return {
     index: index,
     x: GHOST_START[index].x,
     y: GHOST_START[index].y,
-    dir: { x: index === 0 ? 1 : 0, y: index === 0 ? 0 : -1 },
+    dir: { x: index === 0 ? -1 : 0, y: index === 0 ? 0 : -1 },
     speed: 1.8,
     mode: index === 0 ? globalGhostMode : 'house',
     frightenedTimer: 0,
     flashTimer: 0,
     eaten: false,
-    exitTimer: GHOST_RELEASE_DOTS[index],
-    eyeDir: { x: 1, y: 0 },
+    releaseDots: getReleaseDots(index),
+    exitPhase: 0, // 0=waiting, 1=move to center X, 2=move up to exit, 3=done
+    idleTimer: 0, // backup timer for release
+    eyeDir: { x: -1, y: 0 },
     bounceDir: 1,
     bounceY: 0,
     frightened: false
@@ -535,7 +548,8 @@ function moveGhost(g) {
     if (dist < 4) {
       g.eaten = false;
       g.mode = 'house';
-      g.exitTimer = 0;
+      g.exitPhase = 1; // immediately start exiting
+      g.releaseDots = 0;
       g.x = GHOST_HOUSE_CENTER.x;
       g.y = GHOST_HOUSE_CENTER.y;
       return;
@@ -622,26 +636,51 @@ function moveGhost(g) {
 }
 
 function releaseGhosts() {
+  var exitSpeed = 2;
+  var centerX = GHOST_EXIT.x; // 14 * CELL (grid-aligned)
+  var exitY = GHOST_EXIT.y;   // 11 * CELL
+
   for (var i = 0; i < ghosts.length; i++) {
     var g = ghosts[i];
-    if (g.mode === 'house') {
-      g.exitTimer--;
-      if (g.exitTimer <= 0) {
-        var exitX = GHOST_EXIT.x;
-        var exitY = GHOST_EXIT.y;
-        var dx = exitX - g.x;
-        var dy = exitY - g.y;
-        var dist = Math.sqrt(dx*dx + dy*dy);
-        if (dist < 4) {
-          g.x = exitX;
-          g.y = exitY;
-          g.mode = globalGhostMode;
-          g.dir = { x: -1, y: 0 };
-        } else {
-          g.x += (dx/dist) * 2;
-          g.y += (dy/dist) * 2;
-        }
+    if (g.mode !== 'house') continue;
+
+    // Check if this ghost should start exiting
+    if (g.exitPhase === 0) {
+      g.idleTimer++;
+      var shouldRelease = (totalDotsEaten >= g.releaseDots) || (g.idleTimer >= GHOST_HOUSE_IDLE_LIMIT);
+      if (!shouldRelease) continue;
+      g.exitPhase = 1;
+    }
+
+    // Phase 1: move horizontally to house center X
+    if (g.exitPhase === 1) {
+      var dx = centerX - g.x;
+      if (Math.abs(dx) < exitSpeed) {
+        g.x = centerX;
+        g.exitPhase = 2;
+      } else {
+        g.x += (dx > 0 ? exitSpeed : -exitSpeed);
       }
+    }
+
+    // Phase 2: move up through the door to exit Y
+    if (g.exitPhase === 2) {
+      var dy = exitY - g.y;
+      if (Math.abs(dy) < exitSpeed) {
+        g.y = exitY;
+        g.exitPhase = 3;
+      } else {
+        g.y += (dy > 0 ? exitSpeed : -exitSpeed);
+      }
+    }
+
+    // Phase 3: arrived at exit — enter maze
+    if (g.exitPhase === 3) {
+      g.x = centerX;
+      g.y = exitY;
+      g.mode = globalGhostMode;
+      g.dir = { x: GHOST_EXIT_DIRS[g.index], y: 0 };
+      g.exitPhase = 0;
     }
   }
 }
