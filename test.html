@@ -174,7 +174,7 @@ document.getElementById('loading').textContent = 'Fetching game script...';
 fetch('index.html')
   .then(function(r) { return r.text(); })
   .then(function(html) {
-    // Extract script content between first <script> and last </script>
+    // Extract the inline JS from the game HTML file
     var openTag = '<scr' + 'ipt>';
     var closeTag = '</scr' + 'ipt>';
     var start = html.indexOf(openTag);
