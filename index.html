@@ -330,6 +330,8 @@ var animFrame;
 var frightenTimer = 0, frightenDuration = 8000;
 var readyTimer = 0;
 var eatGhostScore = 200;
+var wonFlashCount = 0; var wonFlashTimer = 0;
+var scorePopups = [];
 var lastTime = 0;
 var extraLifeAwarded = false; // ARC-1: extra life at 10,000 points
 var accumulator = 0;
@@ -1205,6 +1207,7 @@ function initGame() {
   fruit = null;
   fruitVisible = false;
   eatSlowFrames = 0;
+  scorePopups = [];
   pacman = createPacman();
   ghosts = [0,1,2,3].map(createGhost);
   gameState = 'ready';
@@ -1224,6 +1227,7 @@ function initLevel() {
   fruit = null;
   fruitVisible = false;
   eatSlowFrames = 0;
+  scorePopups = [];
   pacman = createPacman();
   ghosts = [0,1,2,3].map(createGhost);
   gameState = 'ready';
@@ -1295,12 +1299,8 @@ function movePacman() {
   if (dots <= 0) {
     level++;
     gameState = 'won';
-    setTimeout(function() {
-      try { initLevel(); } catch(err) {
-        gameState = 'start';
-        gameStarted = false;
-      }
-    }, 1500);
+    wonFlashCount = 0;
+    wonFlashTimer = 0;
   }
 
   // Animate mouth
@@ -1343,6 +1343,7 @@ function checkCollisions() {
         playEatGhost();
         if (score > highScore) highScore = score;
         if (!extraLifeAwarded && score >= 10000) { extraLifeAwarded = true; lives++; playPowerPellet(); } // ARC-1
+        scorePopups.push({ x: g.x, y: g.y, text: '' + eatGhostScore, timer: 60 });
         eatGhostScore *= 2;
       } else if (!g.eaten && !pacman.dead && gameState === 'playing') {
         pacman.dead = true;
@@ -1388,6 +1389,17 @@ function update(dt) {
     return;
   }
 
+  if (gameState === 'won') {
+    wonFlashTimer++;
+    if (wonFlashTimer % 15 === 0) { // flash every 15 frames (~0.25s)
+      wonFlashCount++;
+    }
+    if (wonFlashCount >= 8) { // 4 complete cycles (white→blue = 2 per cycle × 4)
+      try { initLevel(); } catch(err) { gameState = 'start'; gameStarted = false; }
+    }
+    return;
+  }
+
   if (gameState !== 'playing') return;
 
   // Update speeds dynamically
@@ -1417,6 +1429,11 @@ function update(dt) {
   }
 
   checkCollisions();
+
+  for (var sp = scorePopups.length - 1; sp >= 0; sp--) {
+    scorePopups[sp].timer--;
+    if (scorePopups[sp].timer <= 0) scorePopups.splice(sp, 1);
+  }
 }
 
 // ===================== RENDER =====================
@@ -1455,6 +1472,27 @@ function render() {
     return;
   }
 
+  if (gameState === 'won') {
+    // Draw maze with alternating wall colors
+    var flashWhite = wonFlashCount % 2 === 0;
+    ctx.fillStyle = BG_COLOR;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (var wr = 0; wr < ROWS; wr++) {
+      for (var wc = 0; wc < COLS; wc++) {
+        var wx = wc * CELL;
+        var wy = wr * CELL;
+        if (MAZE_TEMPLATE[wr][wc] === 1) {
+          ctx.fillStyle = flashWhite ? '#FFFFFF' : WALL_COLOR;
+          ctx.fillRect(wx, wy, CELL, CELL);
+        }
+      }
+    }
+    drawPacman();
+    drawLives();
+    drawScore();
+    return;
+  }
+
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawMaze();
 
@@ -1473,6 +1511,17 @@ function render() {
   for (var j = 0; j < ghosts.length; j++) drawGhost(ghosts[j]);
   drawFruit();
   drawPacman();
+  // Score popups
+  ctx.fillStyle = '#00FFFF';
+  ctx.font = 'bold 8px "Press Start 2P", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (var pi = 0; pi < scorePopups.length; pi++) {
+    var p = scorePopups[pi];
+    ctx.globalAlpha = Math.min(1, p.timer / 20);
+    ctx.fillText(p.text, p.x + CELL/2, p.y + CELL/2);
+  }
+  ctx.globalAlpha = 1;
   drawLives();
   drawScore();
 }
