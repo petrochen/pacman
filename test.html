@@ -910,6 +910,195 @@ function runAllTests() {
     }
     resultsDiv.appendChild(line);
   });
+
+  // ===================== SIMULATION FUZZER =====================
+  runSimulation(win);
+}
+
+function runSimulation(win) {
+  var SIM_FRAMES = 10000;
+  var DIRECTIONS = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
+  var simErrors = [];
+  var simStats = { frames: 0, deaths: 0, levelsCompleted: 0, ghostsEaten: 0, maxScore: 0 };
+
+  function simError(frame, msg) {
+    simErrors.push('Frame ' + frame + ': ' + msg);
+  }
+
+  // Reset game
+  win.initGame();
+  win.gameState = 'playing';
+  win.readyTimer = 0;
+
+  var prevState = win.gameState;
+  var stateStuckFrames = 0;
+  var prevPacX = win.pacman.x;
+  var prevPacY = win.pacman.y;
+  var pacStuckFrames = 0;
+  var prevDots = win.dots;
+
+  for (var f = 0; f < SIM_FRAMES; f++) {
+    // Random input every 10-30 frames
+    if (f % (10 + Math.floor(Math.random() * 20)) === 0) {
+      var d = DIRECTIONS[Math.floor(Math.random() * 4)];
+      win.pacman.nextDir = { x: d.x, y: d.y };
+    }
+
+    // Run one update tick
+    try {
+      win.update(win.STEP);
+    } catch(e) {
+      simError(f, 'update() threw: ' + e.message);
+      break;
+    }
+
+    simStats.frames = f;
+    if (win.score > simStats.maxScore) simStats.maxScore = win.score;
+
+    // === INVARIANT CHECKS ===
+
+    // 1. Score must never be negative
+    if (win.score < 0) simError(f, 'Score is negative: ' + win.score);
+
+    // 2. Lives must be 0-10 (reasonable range)
+    if (win.lives < 0 || win.lives > 10) simError(f, 'Lives out of range: ' + win.lives);
+
+    // 3. Pac-Man must be within maze bounds (with tunnel margin)
+    if (win.pacman && !win.pacman.dead) {
+      var px = win.pacman.x, py = win.pacman.y;
+      if (px < -2 * win.CELL || px > (win.COLS + 2) * win.CELL) simError(f, 'Pac-Man X out of bounds: ' + px);
+      if (py < -win.CELL || py > (win.ROWS + 1) * win.CELL) simError(f, 'Pac-Man Y out of bounds: ' + py);
+    }
+
+    // 4. All ghosts must be within bounds (with margin)
+    if (win.ghosts) {
+      for (var gi = 0; gi < win.ghosts.length; gi++) {
+        var g = win.ghosts[gi];
+        if (g.x < -3 * win.CELL || g.x > (win.COLS + 3) * win.CELL) simError(f, 'Ghost ' + gi + ' X out of bounds: ' + g.x);
+        if (g.y < -2 * win.CELL || g.y > (win.ROWS + 2) * win.CELL) simError(f, 'Ghost ' + gi + ' Y out of bounds: ' + g.y);
+      }
+    }
+
+    // 5. Dots must never be negative
+    if (win.dots < 0) simError(f, 'Dots is negative: ' + win.dots);
+
+    // 6. Game state must be valid
+    var validStates = ['start','ready','playing','dead','won','gameover','intermission'];
+    if (validStates.indexOf(win.gameState) < 0) simError(f, 'Invalid gameState: ' + win.gameState);
+
+    // 7. Detect stuck states (same state for 500+ frames, except 'gameover' and 'start')
+    if (win.gameState === prevState && win.gameState !== 'gameover' && win.gameState !== 'start') {
+      stateStuckFrames++;
+      if (stateStuckFrames > 500) {
+        simError(f, 'State stuck in "' + win.gameState + '" for 500+ frames');
+        stateStuckFrames = 0; // only report once
+      }
+    } else {
+      stateStuckFrames = 0;
+    }
+
+    // 8. Detect Pac-Man stuck (same position for 200+ frames during 'playing')
+    if (win.gameState === 'playing' && win.pacman && !win.pacman.dead) {
+      if (Math.abs(win.pacman.x - prevPacX) < 0.01 && Math.abs(win.pacman.y - prevPacY) < 0.01) {
+        pacStuckFrames++;
+        if (pacStuckFrames > 200) {
+          simError(f, 'Pac-Man stuck at (' + win.pacman.x.toFixed(1) + ',' + win.pacman.y.toFixed(1) + ') for 200+ frames');
+          pacStuckFrames = 0;
+        }
+      } else {
+        pacStuckFrames = 0;
+      }
+      prevPacX = win.pacman.x;
+      prevPacY = win.pacman.y;
+    }
+
+    // 9. scorePopups should not grow unbounded
+    if (win.scorePopups && win.scorePopups.length > 50) simError(f, 'scorePopups leak: ' + win.scorePopups.length + ' entries');
+
+    // 10. frightenTimer should not be negative
+    if (win.frightenTimer < -100) simError(f, 'frightenTimer very negative: ' + win.frightenTimer);
+
+    // Track state transitions
+    if (win.gameState !== prevState) {
+      if (prevState === 'dead' && win.gameState === 'ready') simStats.deaths++;
+      if (prevState === 'dead' && win.gameState === 'gameover') simStats.deaths++;
+      if (win.gameState === 'won' || (prevState === 'won' && win.gameState === 'ready')) simStats.levelsCompleted++;
+    }
+    prevState = win.gameState;
+
+    // Handle state resets for continuous simulation
+    if (win.gameState === 'gameover') {
+      win.initGame();
+      win.gameState = 'playing';
+    }
+    if (win.gameState === 'ready') {
+      win.readyTimer = 0;
+      win.gameState = 'playing';
+    }
+    if (win.gameState === 'won') {
+      // Fast-forward through won animation
+      win.wonFlashCount = 99;
+    }
+    if (win.gameState === 'intermission') {
+      win.intermissionTimer = 999;
+    }
+  }
+
+  // Render simulation results
+  var simDiv = document.createElement('div');
+  simDiv.style.marginTop = '24px';
+  simDiv.style.borderTop = '2px solid #444';
+  simDiv.style.paddingTop = '16px';
+
+  var simTitle = document.createElement('div');
+  simTitle.className = 'suite-name';
+  simTitle.textContent = '▶ Simulation Fuzzer (' + SIM_FRAMES + ' frames)';
+  simDiv.appendChild(simTitle);
+
+  var statsLine = document.createElement('div');
+  statsLine.style.color = '#aaa';
+  statsLine.style.margin = '8px 0';
+  statsLine.textContent = 'Frames: ' + simStats.frames + ' | Deaths: ' + simStats.deaths +
+    ' | Levels: ' + simStats.levelsCompleted + ' | Max Score: ' + simStats.maxScore;
+  simDiv.appendChild(statsLine);
+
+  if (simErrors.length === 0) {
+    var ok = document.createElement('div');
+    ok.className = 'pass';
+    ok.textContent = '✓ No invariant violations found';
+    simDiv.appendChild(ok);
+    passed++;
+    tests.push({ name: 'Simulation > No invariant violations in ' + SIM_FRAMES + ' frames', pass: true, suite: 'Simulation' });
+  } else {
+    // Deduplicate errors
+    var uniqueErrors = [];
+    var seen = {};
+    simErrors.forEach(function(e) {
+      var key = e.replace(/Frame \d+/, 'Frame N').replace(/[\d.]+/g, 'N');
+      if (!seen[key]) {
+        seen[key] = true;
+        uniqueErrors.push(e);
+      }
+    });
+
+    uniqueErrors.forEach(function(e) {
+      var errLine = document.createElement('div');
+      errLine.className = 'fail';
+      errLine.textContent = '✗ ' + e;
+      simDiv.appendChild(errLine);
+    });
+    failed += uniqueErrors.length;
+    uniqueErrors.forEach(function(e) {
+      tests.push({ name: 'Simulation > ' + e, pass: false, error: e, suite: 'Simulation' });
+    });
+  }
+
+  document.getElementById('results').appendChild(simDiv);
+
+  // Update summary
+  var summaryDiv = document.getElementById('summary');
+  summaryDiv.textContent = passed + ' passed, ' + failed + ' failed';
+  summaryDiv.className = 'summary ' + (failed === 0 ? 'ok' : 'bad');
 }
 </script>
 </body>
