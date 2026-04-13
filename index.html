@@ -406,6 +406,23 @@ function initMaze() {
       if (maze[r][c] === 3) powerPellets++;
     }
   }
+  if (level >= 256) {
+    // Corrupt the right half of the maze (columns 14-27)
+    for (var r = 0; r < ROWS; r++) {
+      for (var c = 14; c < COLS; c++) {
+        // Pseudo-random corruption based on position
+        var hash = (r * 31 + c * 17 + 42) % 7;
+        if (hash === 0) maze[r][c] = 1; // wall
+        else if (hash === 1) maze[r][c] = 0; // dot (unreachable)
+        else if (hash === 2) maze[r][c] = 2; // empty
+        else if (hash === 3) maze[r][c] = 1; // wall
+        else maze[r][c] = 2; // empty
+      }
+    }
+    // Ensure left half tunnel row stays passable
+    maze[14][0] = 2;
+    maze[14][1] = 2;
+  }
 }
 
 function isWall(r, c) {
@@ -837,6 +854,16 @@ function drawMaze() {
       var v = maze[r][c];
       if (v === 1) {
         drawWallCell(r, c, x, y);
+      } else if (level >= 256 && c >= 14 && v === 2) {
+        var glitchColors = ['#FF0000', '#00FF00', '#FFFF00', '#FF00FF', '#00FFFF', '#1a1aff', '#FFFFFF'];
+        if ((r * 11 + c * 23) % 5 === 0) {
+          ctx.fillStyle = glitchColors[(r + c) % glitchColors.length];
+          ctx.font = '10px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          var chars = '@#$%&*!?+=';
+          ctx.fillText(chars[(r * c) % chars.length], x + CELL/2, y + CELL/2);
+        }
       } else if (v === 0) {
         ctx.fillStyle = DOT_COLOR;
         ctx.beginPath();
@@ -859,7 +886,13 @@ function drawMaze() {
 }
 
 function drawWallCell(r, c, x, y) {
-  ctx.fillStyle = WALL_COLOR;
+  var glitchColors = ['#FF0000', '#00FF00', '#FFFF00', '#FF00FF', '#00FFFF', '#1a1aff', '#FFFFFF'];
+  if (level >= 256 && c >= 14) {
+    // Glitchy colors for corrupted area
+    ctx.fillStyle = glitchColors[(r * 7 + c * 13) % glitchColors.length];
+  } else {
+    ctx.fillStyle = WALL_COLOR;
+  }
   ctx.fillRect(x, y, CELL, CELL);
 
   ctx.strokeStyle = '#6060ff';
