@@ -986,12 +986,13 @@ function runSimulation(win) {
     var validStates = ['start','ready','playing','dead','won','gameover','intermission'];
     if (validStates.indexOf(win.gameState) < 0) simError(f, 'Invalid gameState: ' + win.gameState);
 
-    // 7. Detect stuck states (same state for 500+ frames, except 'gameover' and 'start')
-    if (win.gameState === prevState && win.gameState !== 'gameover' && win.gameState !== 'start') {
+    // 7. Detect stuck states (same state for too long, except normal states)
+    var normalStates = ['gameover', 'start', 'playing']; // playing can last a long time
+    if (win.gameState === prevState && normalStates.indexOf(win.gameState) < 0) {
       stateStuckFrames++;
-      if (stateStuckFrames > 500) {
-        simError(f, 'State stuck in "' + win.gameState + '" for 500+ frames');
-        stateStuckFrames = 0; // only report once
+      if (stateStuckFrames > 300) {
+        simError(f, 'State stuck in "' + win.gameState + '" for 300+ frames');
+        stateStuckFrames = 0;
       }
     } else {
       stateStuckFrames = 0;
@@ -1027,8 +1028,24 @@ function runSimulation(win) {
     prevState = win.gameState;
 
     // Handle state resets for continuous simulation
+    // (setTimeout callbacks don't fire in synchronous loop, so we fast-forward)
     if (win.gameState === 'gameover') {
       win.initGame();
+      win.gameState = 'playing';
+    }
+    if (win.gameState === 'dead') {
+      // Simulate the 2-second death timeout: skip ahead
+      win.lives--;
+      simStats.deaths++;
+      if (win.lives <= 0) {
+        win.initGame();
+      } else {
+        win.pacman = win.createPacman();
+        win.ghosts = [0,1,2,3].map(win.createGhost);
+        win.frightenTimer = 0;
+        win.modeTimer = 0;
+        win.modeIndex = 0;
+      }
       win.gameState = 'playing';
     }
     if (win.gameState === 'ready') {
